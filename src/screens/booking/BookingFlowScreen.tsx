@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   Image,
   StatusBar,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -35,39 +36,72 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
   // Flow Step: 1, 2, 3, 4
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4>(1);
 
-  // Step 1: Dates
+  // Step 1: Dynamic Dates & Duration
   const [durationDays, setDurationDays] = useState(2);
-  const [startDate] = useState('12 Sep 2026, 10:00 AM');
-  const [endDate] = useState('14 Sep 2026, 08:00 PM');
+
+  const { startDateTimeIso, endDateTimeIso, formattedStartDate, formattedEndDate } = useMemo(() => {
+    const start = new Date();
+    start.setDate(start.getDate() + 1); // Tomorrow
+    start.setHours(10, 0, 0, 0);
+
+    const end = new Date(start);
+    end.setDate(start.getDate() + durationDays);
+    end.setHours(20, 0, 0, 0);
+
+    const formatOpt: Intl.DateTimeFormatOptions = {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    };
+    return {
+      startDateTimeIso: start.toISOString(),
+      endDateTimeIso: end.toISOString(),
+      formattedStartDate: start.toLocaleDateString('en-IN', formatOpt),
+      formattedEndDate: end.toLocaleDateString('en-IN', formatOpt),
+    };
+  }, [durationDays]);
 
   // Step 2: Pickup method
   const [pickupMethod, setPickupMethod] = useState<PickupMethod>('self_pickup');
-  const deliveryFee = pickupMethod === 'home_delivery' ? (vehicle.deliveryFee || 200) : 0;
 
   // Step 4: Payment method
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethodType>('upi');
 
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+  const [isQuoteLoading, setIsQuoteLoading] = useState(false);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
   const [quoteBreakdown, setQuoteBreakdown] = useState<any>(null);
 
-  // Live dynamic fare calculation from backend POST /vehicles/quote
+  // Live dynamic fare calculation from backend POST /vehicles/quote (Server is source of truth)
   useEffect(() => {
     let isMounted = true;
     const fetchQuote = async () => {
+      setIsQuoteLoading(true);
+      setQuoteError(null);
       try {
-        const start = new Date();
-        const end = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000);
         const res = await vehicleService.calculateFareQuote({
           vehicleId: vehicle.id,
-          startDateTime: start.toISOString(),
-          endDateTime: end.toISOString(),
+          startDateTime: startDateTimeIso,
+          endDateTime: endDateTimeIso,
           pickupType: pickupMethod,
         });
-        if (isMounted && res.success && res.data?.breakdown) {
-          setQuoteBreakdown(res.data.breakdown);
+
+        if (isMounted) {
+          setIsQuoteLoading(false);
+          if (res.success && res.data?.breakdown) {
+            setQuoteBreakdown(res.data.breakdown);
+          } else {
+            setQuoteError(res.message || 'Unable to retrieve verified quote from server');
+          }
         }
-      } catch (err) {
-        console.warn('[BookingFlowScreen] Error fetching fare quote:', err);
+      } catch (err: any) {
+        if (isMounted) {
+          setIsQuoteLoading(false);
+          console.warn('[BookingFlowScreen] Error fetching fare quote:', err);
+          setQuoteError(err.message || 'Error communicating with pricing server');
+        }
       }
     };
 
@@ -75,17 +109,19 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
     return () => {
       isMounted = false;
     };
-  }, [vehicle.id, durationDays, pickupMethod]);
+  }, [vehicle.id, startDateTimeIso, endDateTimeIso, pickupMethod]);
 
-  // Financial calculations
-  const baseRate = vehicle.pricePerDay;
-  const rentalSubtotal = quoteBreakdown?.baseAmount ?? (baseRate * durationDays);
+  // Server-authorized pricing breakdown (The backend is the source of truth)
+  // Never trust frontend client pricing, commissions, taxes, deposit, or total
+  const isServerPricingReady = !isQuoteLoading && !!quoteBreakdown;
+
+  const rentalSubtotal = quoteBreakdown?.baseAmount ?? (vehicle.pricePerDay * durationDays);
+  const deliveryFee = quoteBreakdown?.deliveryFee ?? (pickupMethod === 'home_delivery' ? (vehicle.deliveryFee || 200) : 0);
   const commissionRate = quoteBreakdown?.commissionRate ?? (APP_CONFIG.categoryCommissionPercentages[vehicle.category] || 15);
   const myRideFee = quoteBreakdown?.commissionAmount ?? Math.round((rentalSubtotal * commissionRate) / 100);
   const securityDeposit = quoteBreakdown?.securityDeposit ?? vehicle.securityDeposit;
   const taxes = quoteBreakdown?.taxes ?? Math.round(myRideFee * 0.18);
   const totalPayableNow = quoteBreakdown?.totalAmount ?? (rentalSubtotal + deliveryFee + myRideFee + taxes + securityDeposit);
-
 
   const handleNextStep = () => {
     if (currentStep < 4) {
@@ -99,23 +135,26 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
     setIsProcessingPayment(true);
 
     try {
-      // Create booking on live backend API
+      // 1. Create booking on live backend API
+      // Server-side pricing: The backend calculates final base amount, platform commission,
+      // taxes, security deposit, and totalAmount server-side from database configuration
       const res = await bookingService.createBooking({
         vehicleId: vehicle.id,
         vehicle,
-        customerId: user?.id || 'user_cust_1',
+        customerId: user?.id || '6a9e4e50b4a29f4bdb7b6898',
         customerName: user?.fullName || 'Rahul Sharma',
         customerPhone: user?.phoneNumber || '+91 98765 43210',
         hostId: vehicle.hostId,
         hostName: vehicle.hostName,
         hostPhone: vehicle.hostPhone || '+91 98765 00001',
-        startDate,
-        endDate,
+        startDate: startDateTimeIso,
+        endDate: endDateTimeIso,
         pickupLocation: pickupMethod === 'home_delivery' ? 'Delivered to your address' : `${vehicle.area}, ${vehicle.city}`,
         dropoffLocation: `${vehicle.area}, ${vehicle.city}`,
         pickupMethod,
         status: 'upcoming',
         fare: {
+          // Frontend estimates - backend definitively recalculates and enforces server pricing
           baseRental: rentalSubtotal,
           durationDays,
           deliveryFee,
@@ -134,8 +173,18 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
         return;
       }
 
-      // Backend booking ID must be used
+      // 2. The final booking amount and canonical ID MUST strictly come from the backend
       const confirmedBooking = res.data;
+      const backendFare = confirmedBooking.fare;
+
+      console.log('[BookingFlowScreen] Final server-authorized pricing applied:', {
+        bookingId: confirmedBooking.id,
+        serverBaseRental: backendFare?.baseRental,
+        serverCommission: backendFare?.myRideServiceFee,
+        serverTaxes: backendFare?.taxes,
+        serverDeposit: backendFare?.securityDeposit,
+        serverTotalPayable: backendFare?.totalPayableNow,
+      });
 
       if (confirmedBooking.id) {
         await paymentService.simulatePayment(confirmedBooking.id).catch(() => {});
@@ -237,7 +286,7 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
                 <Ionicons name="calendar" size={20} color={colors.primary} />
                 <View style={{ marginLeft: 12 }}>
                   <Text style={styles.dateBlockLabel}>Pickup Date & Time</Text>
-                  <Text style={styles.dateBlockValue}>{startDate}</Text>
+                  <Text style={styles.dateBlockValue}>{formattedStartDate}</Text>
                 </View>
               </View>
 
@@ -247,7 +296,7 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
                 <Ionicons name="calendar-outline" size={20} color={colors.primary} />
                 <View style={{ marginLeft: 12 }}>
                   <Text style={styles.dateBlockLabel}>Return Date & Time</Text>
-                  <Text style={styles.dateBlockValue}>{endDate}</Text>
+                  <Text style={styles.dateBlockValue}>{formattedEndDate}</Text>
                 </View>
               </View>
             </View>
@@ -328,6 +377,28 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
             </Text>
 
             <View style={styles.reviewCard}>
+              {/* Server-Side Pricing Verification Badge */}
+              {isQuoteLoading ? (
+                <View style={styles.serverQuoteBadgeLoading}>
+                  <ActivityIndicator size="small" color={colors.primary} />
+                  <Text style={styles.serverQuoteBadgeTextLoading}>Calculating server quote...</Text>
+                </View>
+              ) : quoteBreakdown ? (
+                <View style={styles.serverQuoteBadge}>
+                  <Ionicons name="shield-checkmark" size={14} color="#03543F" />
+                  <Text style={styles.serverQuoteBadgeText}>
+                    Server Verified Fare • Platform Commission: {commissionRate}%
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.serverQuoteBadgeWarning}>
+                  <Ionicons name="information-circle-outline" size={14} color="#854D0E" />
+                  <Text style={styles.serverQuoteBadgeTextWarning}>
+                    Estimated Fare • Final amount will be authorized by server on booking
+                  </Text>
+                </View>
+              )}
+
               <View style={styles.reviewRow}>
                 <Text style={styles.reviewLabel}>Duration</Text>
                 <Text style={styles.reviewValue}>{durationDays} Days</Text>
@@ -348,7 +419,9 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
               <View style={styles.divider} />
 
               <View style={styles.reviewRow}>
-                <Text style={styles.reviewLabel}>Base Rental (₹{baseRate} × {durationDays})</Text>
+                <Text style={styles.reviewLabel}>
+                  Base Rental (₹{quoteBreakdown?.baseAmount ? Math.round(quoteBreakdown.baseAmount / durationDays) : vehicle.pricePerDay} × {durationDays})
+                </Text>
                 <Text style={styles.reviewValue}>₹{rentalSubtotal}</Text>
               </View>
 
@@ -378,7 +451,11 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
 
               <View style={styles.reviewTotalRow}>
                 <Text style={styles.reviewTotalLabel}>Total Payable Now</Text>
-                <Text style={styles.reviewTotalValue}>₹{totalPayableNow}</Text>
+                {isQuoteLoading ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : (
+                  <Text style={styles.reviewTotalValue}>₹{totalPayableNow}</Text>
+                )}
               </View>
             </View>
 
@@ -517,7 +594,14 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
       <View style={styles.bottomBar}>
         <View>
           <Text style={styles.footerLabel}>Total Amount</Text>
-          <Text style={styles.footerAmount}>₹{totalPayableNow}</Text>
+          {isQuoteLoading ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+              <ActivityIndicator size="small" color={colors.primary} style={{ marginRight: 6 }} />
+              <Text style={[styles.footerAmount, { fontSize: 13, color: colors.muted }]}>Calculating...</Text>
+            </View>
+          ) : (
+            <Text style={styles.footerAmount}>₹{totalPayableNow}</Text>
+          )}
         </View>
 
         <Button
@@ -525,6 +609,7 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
           onPress={handleNextStep}
           variant="primary"
           size="lg"
+          disabled={isQuoteLoading}
           loading={isProcessingPayment}
           style={styles.continueBtn}
         />
@@ -943,6 +1028,59 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     flex: 1,
     lineHeight: 15,
+  },
+  serverQuoteBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#DEF7EC',
+    borderWidth: 1,
+    borderColor: '#BCF0DA',
+    borderRadius: borderRadius.sm,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginBottom: 12,
+  },
+  serverQuoteBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#03543F',
+    marginLeft: 6,
+    flex: 1,
+  },
+  serverQuoteBadgeLoading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: borderRadius.sm,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginBottom: 12,
+  },
+  serverQuoteBadgeTextLoading: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: colors.muted,
+    marginLeft: 6,
+  },
+  serverQuoteBadgeWarning: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF08A',
+    borderWidth: 1,
+    borderColor: '#FDE047',
+    borderRadius: borderRadius.sm,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginBottom: 12,
+  },
+  serverQuoteBadgeTextWarning: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#854D0E',
+    marginLeft: 6,
+    flex: 1,
   },
 });
 
