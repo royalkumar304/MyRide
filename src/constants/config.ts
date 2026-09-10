@@ -35,19 +35,19 @@ export const APP_CONFIG = {
   referralRewardAmount: 200,
   referredUserDiscount: 150,
 
-  // Architecture environment configuration keys
+  // Client-safe environment configuration
   apiBaseUrl: process.env.EXPO_PUBLIC_API_URL || process.env.API_BASE_URL || 'http://localhost:5000/api/v1',
-  googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY || 'AIzaSy_MOCK_GOOGLE_MAPS_KEY_MYRIDE',
-  razorpayKeyId: process.env.RAZORPAY_KEY_ID || 'rzp_test_MyRideProd2026',
+  googleMapsApiKey: process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_MAPS_API_KEY || '',
+  razorpayKeyId: process.env.EXPO_PUBLIC_RAZORPAY_KEY_ID || process.env.RAZORPAY_KEY_ID || '',
   firebaseConfig: {
-    apiKey: process.env.FIREBASE_API_KEY || 'AIzaSy_MOCK_FIREBASE_KEY',
-    projectId: process.env.FIREBASE_PROJECT_ID || 'myride-mobility',
+    apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY || process.env.FIREBASE_API_KEY || '',
+    projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || 'myride-mobility',
     messagingSenderId: '1092837465',
     appId: '1:1092837465:web:abcdef123456',
   },
   cloudinaryConfig: {
-    cloudName: process.env.CLOUDINARY_CLOUD_NAME || 'myride-assets',
-    uploadPreset: process.env.CLOUDINARY_PRESET || 'vehicle_documents',
+    cloudName: process.env.EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME || process.env.CLOUDINARY_CLOUD_NAME || 'myride-assets',
+    uploadPreset: process.env.EXPO_PUBLIC_CLOUDINARY_PRESET || process.env.CLOUDINARY_PRESET || 'vehicle_documents',
   },
 };
 

@@ -3,6 +3,7 @@ import { User, UserRole } from '../../types';
 import { tokenStorage } from '../../services/tokenStorage';
 import { authService } from '../../services/authService';
 import { apiClient } from '../../services/apiClient';
+import { logger } from '../../utils/logger';
 
 interface AuthState {
   user: User | null;
@@ -64,14 +65,14 @@ export const initializeAuth = createAsyncThunk(
       }
 
       // 5. Invalid/expired token → Clear token from storage & ApiClient
-      console.log('[initializeAuth] Token verification failed or expired. Clearing token.');
+      logger.debug('[initializeAuth] Token verification failed or expired. Clearing token.');
       await tokenStorage.clearToken();
       await tokenStorage.clearSession();
       apiClient.setAuthToken(null);
       return null;
     } catch (e) {
       // Any network or 401 error during verification → Clear token
-      console.warn('[initializeAuth] Error verifying stored token with backend:', e);
+      logger.warn('[initializeAuth] Error verifying stored token with backend:', e);
       await tokenStorage.clearToken();
       await tokenStorage.clearSession();
       apiClient.setAuthToken(null);

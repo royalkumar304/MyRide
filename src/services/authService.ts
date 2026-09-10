@@ -3,6 +3,7 @@ import { apiClient, setAuthToken, ApiResponse } from './apiClient';
 import { adaptBackendUserToMobile } from './api/adapters';
 import { tokenStorage } from './tokenStorage';
 import { mockAuthService, INITIAL_MOCK_USER } from './mock/mockAuthService';
+import { logger } from '../utils/logger';
 
 export { INITIAL_MOCK_USER };
 
@@ -50,7 +51,7 @@ export const authService = {
     }
 
     // Fallback to mock service if backend is offline or unreachable
-    console.warn('[authService.sendOtp] Live API unreachable or failed. Falling back to mock.');
+    logger.warn('[authService.sendOtp] Live API unreachable or failed. Falling back to mock.');
     return mockAuthService.sendOtp(phoneNumber);
   },
 
@@ -127,7 +128,7 @@ export const authService = {
       };
     }
 
-    console.warn('[authService.verifyOtp] Live API failed or offline. Using mockAuthService fallback.');
+    logger.warn('[authService.verifyOtp] Live API failed or offline. Using mockAuthService fallback.');
     return mockAuthService.verifyOtp(phoneNumber, otp);
   },
 
@@ -169,7 +170,7 @@ export const authService = {
       };
     }
 
-    console.warn('[authService.signup] Live API failed. Using mockAuthService fallback.');
+    logger.warn('[authService.signup] Live API failed. Using mockAuthService fallback.');
     return mockAuthService.signup(data);
   },
 

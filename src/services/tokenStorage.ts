@@ -2,6 +2,7 @@ import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { User } from '../types';
 import { apiClient } from './apiClient';
+import { logger } from '../utils/logger';
 
 const SECURE_TOKEN_KEY = 'myride_auth_jwt_token';
 const FALLBACK_TOKEN_KEY = '@myride_jwt_token';
@@ -46,7 +47,7 @@ export const tokenStorage = {
       // Sync with centralized API client
       apiClient.setAuthToken(token);
     } catch (error) {
-      console.error('[tokenStorage.saveToken] Error saving token:', error);
+      logger.error('[tokenStorage.saveToken] Error saving token:', error);
     }
   },
 
@@ -65,7 +66,7 @@ export const tokenStorage = {
       // Fallback or migration check from AsyncStorage
       return await AsyncStorage.getItem(FALLBACK_TOKEN_KEY);
     } catch (error) {
-      console.error('[tokenStorage.getToken] Error retrieving token:', error);
+      logger.error('[tokenStorage.getToken] Error retrieving token:', error);
       return null;
     }
   },
@@ -91,7 +92,7 @@ export const tokenStorage = {
       // Clear token from centralized API client
       apiClient.setAuthToken(null);
     } catch (error) {
-      console.error('[tokenStorage.clearToken] Error clearing token:', error);
+      logger.error('[tokenStorage.clearToken] Error clearing token:', error);
     }
   },
 
@@ -111,7 +112,7 @@ export const tokenStorage = {
     try {
       await AsyncStorage.setItem(USER_KEY, JSON.stringify(user));
     } catch (error) {
-      console.error('[tokenStorage.setStoredUser] Error saving user profile:', error);
+      logger.error('[tokenStorage.setStoredUser] Error saving user profile:', error);
     }
   },
 
@@ -121,7 +122,7 @@ export const tokenStorage = {
       if (!userJson) return null;
       return JSON.parse(userJson) as User;
     } catch (error) {
-      console.error('[tokenStorage.getStoredUser] Error retrieving user profile:', error);
+      logger.error('[tokenStorage.getStoredUser] Error retrieving user profile:', error);
       return null;
     }
   },
@@ -130,7 +131,7 @@ export const tokenStorage = {
     try {
       await AsyncStorage.removeItem(USER_KEY);
     } catch (error) {
-      console.error('[tokenStorage.removeStoredUser] Error removing user profile:', error);
+      logger.error('[tokenStorage.removeStoredUser] Error removing user profile:', error);
     }
   },
 
@@ -144,7 +145,7 @@ export const tokenStorage = {
         this.setStoredUser(user),
       ]);
     } catch (error) {
-      console.error('[tokenStorage.saveSession] Error saving session:', error);
+      logger.error('[tokenStorage.saveSession] Error saving session:', error);
     }
   },
 
@@ -158,7 +159,7 @@ export const tokenStorage = {
         this.removeStoredUser(),
       ]);
     } catch (error) {
-      console.error('[tokenStorage.clearSession] Error clearing session:', error);
+      logger.error('[tokenStorage.clearSession] Error clearing session:', error);
     }
   },
 

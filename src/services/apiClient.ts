@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import { APP_CONFIG } from '../constants/config';
+import { logger } from '../utils/logger';
 import {
   getFriendlyErrorMessage,
   isNetworkError as checkIsNetworkError,
@@ -251,7 +252,7 @@ class ApiClient {
       try {
         listener();
       } catch (err) {
-        console.error('[ApiClient] Error in unauthorized listener:', err);
+        logger.error('[ApiClient] Error in unauthorized listener:', err);
       }
     });
   }

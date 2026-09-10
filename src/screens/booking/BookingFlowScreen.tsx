@@ -24,6 +24,7 @@ import { useAppDispatch, useAppSelector } from '../../store';
 import { addBooking } from '../../store/slices/bookingSlice';
 import { bookingService } from '../../services/bookingService';
 import { vehicleService } from '../../services/vehicleService';
+import { logger } from '../../utils/logger';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'BookingFlow'>;
 
@@ -98,7 +99,7 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
       } catch (err: any) {
         if (isMounted) {
           setIsQuoteLoading(false);
-          console.warn('[BookingFlowScreen] Error fetching fare quote:', err);
+          logger.warn('[BookingFlowScreen] Error fetching fare quote:', err);
           setQuoteError(err.message || 'Error communicating with pricing server');
         }
       }
@@ -187,7 +188,7 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
       const confirmedBooking = res.data;
       const backendFare = confirmedBooking.fare;
 
-      console.log('[BookingFlowScreen] Final server-authorized pricing applied:', {
+      logger.debug('[BookingFlowScreen] Final server-authorized pricing applied:', {
         bookingId: confirmedBooking.id,
         serverBaseAmount: confirmedBooking.pricing?.baseAmount,
         serverCommission: confirmedBooking.pricing?.commissionAmount,
@@ -200,7 +201,7 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
       dispatch(addBooking(confirmedBooking));
       navigation.replace('BookingConfirmation', { booking: confirmedBooking });
     } catch (err: any) {
-      console.warn('[BookingFlowScreen] Error during booking creation:', err);
+      logger.warn('[BookingFlowScreen] Error during booking creation:', err);
       Alert.alert('Booking Error', err.message || 'Network error occurred while reserving your vehicle.');
     } finally {
       setIsProcessingPayment(false);
