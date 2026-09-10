@@ -1,5 +1,6 @@
 import { Vehicle, VehicleFilterParams } from '../types';
-import { apiGet, apiPost, ApiResponse, adaptBackendVehicleToMobile } from './api';
+import { apiClient, ApiResponse } from './apiClient';
+import { adaptBackendVehicleToMobile } from './api/adapters';
 import { mockVehicleService } from './mock/mockVehicleService';
 
 export const vehicleService = {
@@ -31,7 +32,7 @@ export const vehicleService = {
     }
 
     const queryString = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
-    const response = await apiGet<{ success: boolean; count: number; vehicles: any[] }>(`/vehicles${queryString}`);
+    const response = await apiClient.get<{ success: boolean; count: number; vehicles: any[] }>(`/vehicles${queryString}`);
 
     if (response.success && response.data?.vehicles && Array.isArray(response.data.vehicles)) {
       let list = response.data.vehicles.map(adaptBackendVehicleToMobile);
@@ -69,7 +70,7 @@ export const vehicleService = {
   },
 
   async getVehicleById(id: string): Promise<ApiResponse<Vehicle>> {
-    const response = await apiGet<{ success: boolean; vehicle: any }>(`/vehicles/${id}`);
+    const response = await apiClient.get<{ success: boolean; vehicle: any }>(`/vehicles/${id}`);
     if (response.success && response.data?.vehicle) {
       return {
         success: true,
@@ -88,7 +89,7 @@ export const vehicleService = {
     pickupType?: 'self_pickup' | 'home_delivery';
     discountAmount?: number;
   }): Promise<ApiResponse<{ durationHours: number; durationDays: number; breakdown: any }>> {
-    const response = await apiPost<{
+    const response = await apiClient.post<{
       success: boolean;
       durationHours: number;
       durationDays: number;
@@ -109,7 +110,7 @@ export const vehicleService = {
   },
 
   async getSupportedCities(): Promise<ApiResponse<string[]>> {
-    const response = await apiGet<{ success: boolean; cities: string[] }>('/vehicles/cities');
+    const response = await apiClient.get<{ success: boolean; cities: string[] }>('/vehicles/cities');
     if (response.success && response.data?.cities) {
       return {
         success: true,
@@ -123,7 +124,7 @@ export const vehicleService = {
   },
 
   async getHostVehicles(hostId: string): Promise<ApiResponse<Vehicle[]>> {
-    const response = await apiGet<{ success: boolean; vehicles: any[] }>('/host/vehicles');
+    const response = await apiClient.get<{ success: boolean; vehicles: any[] }>('/host/vehicles');
     if (response.success && response.data?.vehicles && Array.isArray(response.data.vehicles)) {
       return {
         success: true,
@@ -155,7 +156,7 @@ export const vehicleService = {
       features: vehicleData.features,
     };
 
-    const response = await apiPost<{ success: boolean; vehicle: any }>('/host/vehicles', payload);
+    const response = await apiClient.post<{ success: boolean; vehicle: any }>('/host/vehicles', payload);
     if (response.success && response.data?.vehicle) {
       return {
         success: true,

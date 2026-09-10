@@ -1,5 +1,5 @@
 import { PaymentTransaction, PaymentMethodType } from '../types';
-import { apiPost, ApiResponse } from './api';
+import { apiClient, ApiResponse } from './apiClient';
 import { mockPaymentService } from './mock/mockPaymentService';
 
 export const paymentService = {
@@ -14,7 +14,7 @@ export const paymentService = {
       keyId: string;
     }>
   > {
-    const response = await apiPost<{
+    const response = await apiClient.post<{
       success: boolean;
       order: {
         id: string;
@@ -49,7 +49,7 @@ export const paymentService = {
     amount: number;
     method: PaymentMethodType;
   }): Promise<ApiResponse<PaymentTransaction>> {
-    const response = await apiPost<{ success: boolean; booking: any }>('/payments/verify', {
+    const response = await apiClient.post<{ success: boolean; booking: any }>('/payments/verify', {
       bookingId: paymentDetails.bookingId,
       razorpayOrderId: paymentDetails.razorpayOrderId,
       razorpayPaymentId: paymentDetails.razorpayPaymentId,
@@ -81,7 +81,7 @@ export const paymentService = {
   },
 
   async simulatePayment(bookingId: string): Promise<ApiResponse<{ success: boolean; message: string; booking?: any }>> {
-    const response = await apiPost<{ success: boolean; message: string; booking: any }>(
+    const response = await apiClient.post<{ success: boolean; message: string; booking: any }>(
       '/payments/simulate',
       { bookingId }
     );

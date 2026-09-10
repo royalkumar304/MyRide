@@ -1,7 +1,8 @@
-export * from './api/client';
+export * from './apiClient';
+export { default } from './apiClient';
 export * from './api/adapters';
 
-import { ApiResponse } from './api/client';
+import { ApiResponse } from './apiClient';
 
 // Simulated API helper preserved for explicit mock/testing workflows
 export async function mockApiCall<T>(

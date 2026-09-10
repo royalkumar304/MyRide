@@ -1,10 +1,11 @@
 import { Booking, InspectionData, Review } from '../types';
-import { apiGet, apiPost, ApiResponse, adaptBackendBookingToMobile } from './api';
+import { apiClient, ApiResponse } from './apiClient';
+import { adaptBackendBookingToMobile } from './api/adapters';
 import { mockBookingService } from './mock/mockBookingService';
 
 export const bookingService = {
   async getBookings(customerId?: string): Promise<ApiResponse<Booking[]>> {
-    const response = await apiGet<{ success: boolean; count: number; bookings: any[] }>('/bookings');
+    const response = await apiClient.get<{ success: boolean; count: number; bookings: any[] }>('/bookings');
 
     if (response.success && response.data?.bookings && Array.isArray(response.data.bookings)) {
       return {
@@ -19,7 +20,7 @@ export const bookingService = {
   },
 
   async getBookingById(bookingId: string): Promise<ApiResponse<Booking>> {
-    const response = await apiGet<{ success: boolean; booking: any }>(`/bookings/${bookingId}`);
+    const response = await apiClient.get<{ success: boolean; booking: any }>(`/bookings/${bookingId}`);
 
     if (response.success && response.data?.booking) {
       return {
@@ -43,7 +44,7 @@ export const bookingService = {
       dropoffLocation: bookingData.dropoffLocation || 'Hazratganj Hub',
     };
 
-    const response = await apiPost<{ success: boolean; booking: any; message?: string }>('/bookings', payload);
+    const response = await apiClient.post<{ success: boolean; booking: any; message?: string }>('/bookings', payload);
 
     if (response.success && response.data?.booking) {
       return {
@@ -65,7 +66,7 @@ export const bookingService = {
     refundAmount?: number,
     hostInformedCustomer?: boolean
   ): Promise<ApiResponse<Booking>> {
-    const response = await apiPost<{ success: boolean; booking: any }>(`/bookings/${bookingId}/cancel`, {
+    const response = await apiClient.post<{ success: boolean; booking: any }>(`/bookings/${bookingId}/cancel`, {
       reason,
       cancelledBy,
       refundPercentage,
@@ -99,7 +100,7 @@ export const bookingService = {
       checklist: inspection.checklist,
     };
 
-    const response = await apiPost<{ success: boolean; booking: any }>(
+    const response = await apiClient.post<{ success: boolean; booking: any }>(
       `/bookings/${bookingId}/handover/start`,
       payload
     );
@@ -123,7 +124,7 @@ export const bookingService = {
       checklist: inspection.checklist,
     };
 
-    const response = await apiPost<{ success: boolean; booking: any }>(
+    const response = await apiClient.post<{ success: boolean; booking: any }>(
       `/bookings/${bookingId}/handover/complete`,
       payload
     );
@@ -140,7 +141,7 @@ export const bookingService = {
   },
 
   async submitReview(reviewData: Omit<Review, 'id' | 'createdAt'>): Promise<ApiResponse<Review>> {
-    const response = await apiPost<{ success: boolean; review: any }>('/reviews', reviewData);
+    const response = await apiClient.post<{ success: boolean; review: any }>('/reviews', reviewData);
     if (response.success && response.data?.review) {
       return {
         success: true,
@@ -152,7 +153,7 @@ export const bookingService = {
   },
 
   async getVehicleReviews(vehicleId: string): Promise<ApiResponse<Review[]>> {
-    const response = await apiGet<{ success: boolean; reviews: Review[] }>(`/vehicles/${vehicleId}/reviews`);
+    const response = await apiClient.get<{ success: boolean; reviews: Review[] }>(`/vehicles/${vehicleId}/reviews`);
     if (response.success && response.data?.reviews) {
       return {
         success: true,

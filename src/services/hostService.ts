@@ -1,11 +1,12 @@
 import { HostEarningsSummary, WithdrawalRequest, Booking } from '../types';
-import { apiGet, ApiResponse, adaptBackendBookingToMobile, adaptBackendHostDashboard } from './api';
+import { apiClient, ApiResponse } from './apiClient';
+import { adaptBackendBookingToMobile, adaptBackendHostDashboard } from './api/adapters';
 import { mockHostService } from './mock/mockHostService';
 import { APP_CONFIG } from '../constants/config';
 
 export const hostService = {
   async getDashboardSummary(hostId: string): Promise<ApiResponse<HostEarningsSummary>> {
-    const response = await apiGet<{ success: boolean; stats: any; recentBookings: any[] }>('/host/dashboard');
+    const response = await apiClient.get<{ success: boolean; stats: any; recentBookings: any[] }>('/host/dashboard');
 
     if (response.success && response.data?.stats) {
       const summary = adaptBackendHostDashboard(response.data.stats, []);
@@ -20,7 +21,7 @@ export const hostService = {
   },
 
   async getHostBookings(hostId: string): Promise<ApiResponse<Booking[]>> {
-    const response = await apiGet<{ success: boolean; bookings: any[] }>('/bookings');
+    const response = await apiClient.get<{ success: boolean; bookings: any[] }>('/bookings');
 
     if (response.success && response.data?.bookings && Array.isArray(response.data.bookings)) {
       return {
@@ -34,7 +35,7 @@ export const hostService = {
   },
 
   async getHostEarnings(hostId: string): Promise<ApiResponse<any[]>> {
-    const response = await apiGet<{ success: boolean; earnings: any[] }>('/host/earnings');
+    const response = await apiClient.get<{ success: boolean; earnings: any[] }>('/host/earnings');
     if (response.success && response.data?.earnings) {
       return {
         success: true,

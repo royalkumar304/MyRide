@@ -1,5 +1,6 @@
 import { User, UserRole } from '../types';
-import { apiPost, apiGet, setAuthToken, ApiResponse, adaptBackendUserToMobile } from './api';
+import { apiClient, setAuthToken, ApiResponse } from './apiClient';
+import { adaptBackendUserToMobile } from './api/adapters';
 import { mockAuthService, INITIAL_MOCK_USER } from './mock/mockAuthService';
 
 export { INITIAL_MOCK_USER };
@@ -7,7 +8,7 @@ export { INITIAL_MOCK_USER };
 export const authService = {
   async sendOtp(phoneNumber: string): Promise<ApiResponse<{ otpSent: boolean; message: string; otp?: string; sentViaSms?: boolean; provider?: string }>> {
     const cleanPhone = phoneNumber.replace(/\D/g, '').slice(-10);
-    const response = await apiPost<{
+    const response = await apiClient.post<{
       success: boolean;
       message: string;
       provider?: string;
@@ -35,7 +36,7 @@ export const authService = {
 
   async verifyOtp(phoneNumber: string, otp: string): Promise<ApiResponse<{ user: User; token: string; requiresSignup?: boolean }>> {
     const cleanPhone = phoneNumber.replace(/\D/g, '').slice(-10);
-    const response = await apiPost<{
+    const response = await apiClient.post<{
       success: boolean;
       token?: string;
       user?: any;
@@ -89,7 +90,7 @@ export const authService = {
     initialRole: UserRole;
   }): Promise<ApiResponse<{ user: User; token: string }>> {
     const cleanPhone = data.phoneNumber.replace(/\D/g, '').slice(-10);
-    const response = await apiPost<{
+    const response = await apiClient.post<{
       success: boolean;
       token?: string;
       user?: any;
@@ -119,7 +120,7 @@ export const authService = {
   },
 
   async getProfile(): Promise<ApiResponse<User>> {
-    const response = await apiGet<{ success: boolean; user: any }>('/auth/me');
+    const response = await apiClient.get<{ success: boolean; user: any }>('/auth/me');
     if (response.success && response.data?.user) {
       return {
         success: true,
