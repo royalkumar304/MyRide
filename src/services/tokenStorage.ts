@@ -1,117 +1,164 @@
+import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { User } from '../types';
 import { apiClient } from './apiClient';
 
-const TOKEN_KEY = '@myride_jwt_token';
+const SECURE_TOKEN_KEY = 'myride_auth_jwt_token';
+const FALLBACK_TOKEN_KEY = '@myride_jwt_token';
 const USER_KEY = '@myride_user_profile';
 
 /**
- * Token and Session Management
- * Handles persistent storage of JWT tokens and user session data
- * across app launches for mobile and web.
+ * Checks whether expo-secure-store is available on the current platform/runtime.
+ * SecureStore is available on native Android & iOS devices/simulators,
+ * but unavailable on web browsers.
+ */
+async function isSecureStoreAvailable(): Promise<boolean> {
+  try {
+    return await SecureStore.isAvailableAsync();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Token Storage Service
+ * Implements hardware-backed secure storage (expo-secure-store) for JWT access tokens.
+ * Plain AsyncStorage is NOT used for JWT tokens when secure storage is available.
  */
 export const tokenStorage = {
   /**
-   * Save JWT token to persistent storage and update ApiClient
+   * Securely saves JWT token
    */
-  async setToken(token: string): Promise<void> {
+  async saveToken(token: string): Promise<void> {
     try {
       if (!token) return;
-      await AsyncStorage.setItem(TOKEN_KEY, token);
+      const isSecureAvailable = await isSecureStoreAvailable();
+
+      if (isSecureAvailable) {
+        await SecureStore.setItemAsync(SECURE_TOKEN_KEY, token, {
+          keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK,
+        });
+      } else {
+        // Fallback for web environments where SecureStore is not supported
+        await AsyncStorage.setItem(FALLBACK_TOKEN_KEY, token);
+      }
+
+      // Sync with centralized API client
       apiClient.setAuthToken(token);
     } catch (error) {
-      console.error('[tokenStorage] Error saving token:', error);
+      console.error('[tokenStorage.saveToken] Error saving token:', error);
     }
   },
 
   /**
-   * Retrieve JWT token from persistent storage
+   * Retrieves JWT token from secure storage (or web fallback)
    */
   async getToken(): Promise<string | null> {
     try {
-      const token = await AsyncStorage.getItem(TOKEN_KEY);
-      return token;
+      const isSecureAvailable = await isSecureStoreAvailable();
+
+      if (isSecureAvailable) {
+        const token = await SecureStore.getItemAsync(SECURE_TOKEN_KEY);
+        if (token) return token;
+      }
+
+      // Fallback or migration check from AsyncStorage
+      return await AsyncStorage.getItem(FALLBACK_TOKEN_KEY);
     } catch (error) {
-      console.error('[tokenStorage] Error retrieving token:', error);
+      console.error('[tokenStorage.getToken] Error retrieving token:', error);
       return null;
     }
   },
 
   /**
-   * Remove JWT token from storage and ApiClient
+   * Securely clears JWT token from storage and ApiClient
    */
-  async removeToken(): Promise<void> {
+  async clearToken(): Promise<void> {
     try {
-      await AsyncStorage.removeItem(TOKEN_KEY);
+      const isSecureAvailable = await isSecureStoreAvailable();
+
+      if (isSecureAvailable) {
+        try {
+          await SecureStore.deleteItemAsync(SECURE_TOKEN_KEY);
+        } catch {
+          // Ignore if already absent
+        }
+      }
+
+      // Also ensure fallback key is deleted
+      await AsyncStorage.removeItem(FALLBACK_TOKEN_KEY);
+
+      // Clear token from centralized API client
       apiClient.setAuthToken(null);
     } catch (error) {
-      console.error('[tokenStorage] Error removing token:', error);
+      console.error('[tokenStorage.clearToken] Error clearing token:', error);
     }
   },
 
+  // Aliases for compatibility
+  async setToken(token: string): Promise<void> {
+    return this.saveToken(token);
+  },
+
+  async removeToken(): Promise<void> {
+    return this.clearToken();
+  },
+
   /**
-   * Save user profile to persistent storage
+   * User profile persistence (non-sensitive metadata)
    */
   async setStoredUser(user: User): Promise<void> {
     try {
       await AsyncStorage.setItem(USER_KEY, JSON.stringify(user));
     } catch (error) {
-      console.error('[tokenStorage] Error saving user profile:', error);
+      console.error('[tokenStorage.setStoredUser] Error saving user profile:', error);
     }
   },
 
-  /**
-   * Retrieve user profile from persistent storage
-   */
   async getStoredUser(): Promise<User | null> {
     try {
       const userJson = await AsyncStorage.getItem(USER_KEY);
       if (!userJson) return null;
       return JSON.parse(userJson) as User;
     } catch (error) {
-      console.error('[tokenStorage] Error retrieving user profile:', error);
+      console.error('[tokenStorage.getStoredUser] Error retrieving user profile:', error);
       return null;
     }
   },
 
-  /**
-   * Remove user profile from persistent storage
-   */
   async removeStoredUser(): Promise<void> {
     try {
       await AsyncStorage.removeItem(USER_KEY);
     } catch (error) {
-      console.error('[tokenStorage] Error removing user profile:', error);
+      console.error('[tokenStorage.removeStoredUser] Error removing user profile:', error);
     }
   },
 
   /**
-   * Atomic session save (Token + User)
+   * Atomic session save (Token securely stored + User profile cached)
    */
   async saveSession(token: string, user: User): Promise<void> {
     try {
       await Promise.all([
-        AsyncStorage.setItem(TOKEN_KEY, token),
-        AsyncStorage.setItem(USER_KEY, JSON.stringify(user)),
+        this.saveToken(token),
+        this.setStoredUser(user),
       ]);
-      apiClient.setAuthToken(token);
     } catch (error) {
-      console.error('[tokenStorage] Error saving session:', error);
+      console.error('[tokenStorage.saveSession] Error saving session:', error);
     }
   },
 
   /**
-   * Atomic session clear
+   * Atomic session clear (Removes secure token + cached profile)
    */
   async clearSession(): Promise<void> {
     try {
       await Promise.all([
-        AsyncStorage.removeItem(TOKEN_KEY),
-        AsyncStorage.removeItem(USER_KEY),
+        this.clearToken(),
+        this.removeStoredUser(),
       ]);
-      apiClient.setAuthToken(null);
     } catch (error) {
-      console.error('[tokenStorage] Error clearing session:', error);
+      console.error('[tokenStorage.clearSession] Error clearing session:', error);
     }
   },
 
@@ -119,12 +166,8 @@ export const tokenStorage = {
    * Check if a stored token exists
    */
   async hasSession(): Promise<boolean> {
-    try {
-      const token = await AsyncStorage.getItem(TOKEN_KEY);
-      return !!token;
-    } catch {
-      return false;
-    }
+    const token = await this.getToken();
+    return !!token;
   },
 };
 

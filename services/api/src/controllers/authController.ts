@@ -13,17 +13,30 @@ export async function sendOtp(req: Request, res: Response, next: NextFunction) {
     const { phone } = AuthPhoneSchema.parse(req.body);
     const smsResult = await smsService.sendOtp(phone);
 
-    res.json({
+    const responsePayload: {
+      success: boolean;
+      message: string;
+      provider?: string;
+      sentViaSms?: boolean;
+      otp?: string;
+    } = {
       success: true,
       message: smsResult.message,
       provider: smsResult.provider,
       sentViaSms: smsResult.sent,
-      otp: smsResult.otp,
-    });
+    };
+
+    // NEVER expose OTP in production. Only expose in dev when explicit EXPOSE_DEV_OTP flag is set
+    if (ENV.EXPOSE_DEV_OTP && smsResult.otp) {
+      responsePayload.otp = smsResult.otp;
+    }
+
+    res.json(responsePayload);
   } catch (error) {
     next(error);
   }
 }
+
 
 export async function verifyOtp(req: Request, res: Response, next: NextFunction) {
   try {

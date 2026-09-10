@@ -1,12 +1,31 @@
 import { User, UserRole } from '../types';
 import { apiClient, setAuthToken, ApiResponse } from './apiClient';
 import { adaptBackendUserToMobile } from './api/adapters';
+import { tokenStorage } from './tokenStorage';
 import { mockAuthService, INITIAL_MOCK_USER } from './mock/mockAuthService';
 
 export { INITIAL_MOCK_USER };
 
+/**
+ * Authentication Service
+ * Connects the mobile app to backend endpoints:
+ * - POST /auth/send-otp
+ * - POST /auth/verify-otp
+ * - POST /auth/signup
+ * - GET  /auth/me
+ */
 export const authService = {
-  async sendOtp(phoneNumber: string): Promise<ApiResponse<{ otpSent: boolean; message: string; otp?: string; sentViaSms?: boolean; provider?: string }>> {
+  /**
+   * Request an OTP for authentication / login via POST /auth/send-otp.
+   * In production, OTP values are never exposed in the response payload.
+   */
+  async sendOtp(phoneNumber: string): Promise<ApiResponse<{
+    otpSent: boolean;
+    message: string;
+    otp?: string;
+    sentViaSms?: boolean;
+    provider?: string;
+  }>> {
     const cleanPhone = phoneNumber.replace(/\D/g, '').slice(-10);
     const response = await apiClient.post<{
       success: boolean;
@@ -22,6 +41,7 @@ export const authService = {
         data: {
           otpSent: true,
           message: response.data.message || `OTP sent to +91 ${cleanPhone}`,
+          // In production, backend omits OTP. Only included if dev flag is enabled on server.
           otp: response.data.otp,
           sentViaSms: response.data.sentViaSms,
           provider: response.data.provider,
@@ -34,7 +54,13 @@ export const authService = {
     return mockAuthService.sendOtp(phoneNumber);
   },
 
-  async verifyOtp(phoneNumber: string, otp: string): Promise<ApiResponse<{ user: User; token: string; requiresSignup?: boolean }>> {
+  /**
+   * Verify an OTP and retrieve authenticated session via POST /auth/verify-otp.
+   */
+  async verifyOtp(
+    phoneNumber: string,
+    otp: string
+  ): Promise<ApiResponse<{ user: User; token: string; requiresSignup?: boolean }>> {
     const cleanPhone = phoneNumber.replace(/\D/g, '').slice(-10);
     const response = await apiClient.post<{
       success: boolean;
@@ -70,6 +96,7 @@ export const authService = {
 
       if (response.data.token) {
         setAuthToken(response.data.token);
+        await tokenStorage.saveToken(response.data.token);
       }
 
       const user: User = response.data.user
@@ -87,6 +114,10 @@ export const authService = {
             createdAt: new Date().toISOString(),
           };
 
+      if (response.data.token) {
+        await tokenStorage.saveSession(response.data.token, user);
+      }
+
       return {
         success: true,
         data: {
@@ -94,13 +125,15 @@ export const authService = {
           token: response.data.token || '',
         },
       };
-
     }
 
     console.warn('[authService.verifyOtp] Live API failed or offline. Using mockAuthService fallback.');
     return mockAuthService.verifyOtp(phoneNumber, otp);
   },
 
+  /**
+   * Register a new user profile and issue JWT via POST /auth/signup.
+   */
   async signup(data: {
     fullName: string;
     phoneNumber: string;
@@ -125,6 +158,8 @@ export const authService = {
     if (response.success && response.data && response.data.token) {
       setAuthToken(response.data.token);
       const user = adaptBackendUserToMobile(response.data.user);
+      await tokenStorage.saveSession(response.data.token, user);
+
       return {
         success: true,
         data: {
@@ -138,20 +173,53 @@ export const authService = {
     return mockAuthService.signup(data);
   },
 
-  async getProfile(): Promise<ApiResponse<User>> {
+  /**
+   * Retrieves the currently authenticated user profile via GET /auth/me.
+   */
+  async getCurrentUser(): Promise<ApiResponse<User>> {
     const response = await apiClient.get<{ success: boolean; user: any }>('/auth/me');
     if (response.success && response.data?.user) {
+      const user = adaptBackendUserToMobile(response.data.user);
+      // Cache fresh user profile
+      await tokenStorage.setStoredUser(user);
       return {
         success: true,
-        data: adaptBackendUserToMobile(response.data.user),
+        data: user,
       };
     }
     return {
       success: false,
-      message: response.message || 'Unable to retrieve user profile',
+      message: response.message || 'Unable to retrieve authenticated user profile',
       error: response.error || 'GET_PROFILE_FAILED',
       statusCode: response.statusCode,
     };
+  },
+
+  /**
+   * Alias for getCurrentUser()
+   */
+  async getProfile(): Promise<ApiResponse<User>> {
+    return this.getCurrentUser();
+  },
+
+  /**
+   * Logs out the user by clearing secure tokens and ApiClient state
+   */
+  async logout(): Promise<ApiResponse<{ loggedOut: boolean }>> {
+    try {
+      await tokenStorage.clearSession();
+      setAuthToken(null);
+      return {
+        success: true,
+        data: { loggedOut: true },
+        message: 'Logged out successfully',
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        message: error.message || 'Error during logout',
+      };
+    }
   },
 
   async switchRole(currentRole: UserRole): Promise<ApiResponse<{ activeRole: UserRole }>> {
@@ -162,3 +230,5 @@ export const authService = {
     return mockAuthService.updateKyc(licenseNumber);
   },
 };
+
+export default authService;

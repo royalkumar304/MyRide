@@ -27,12 +27,16 @@ export const OtpVerificationScreen: React.FC<Props> = ({ navigation, route }) =>
   const { phoneNumber, sentOtp, isSignup, signupData } = route.params;
   const dispatch = useAppDispatch();
 
-  const [receivedOtp, setReceivedOtp] = useState(sentOtp || '1234');
-  const [showSmsBanner, setShowSmsBanner] = useState(true);
+  // In production, OTP values are never exposed to the client.
+  // The auto-fill banner is only displayed in explicit dev mode when an OTP was returned.
+  const isDevMode = __DEV__ || process.env.NODE_ENV !== 'production' || process.env.EXPO_PUBLIC_DEV_MODE === 'true';
+  const [receivedOtp, setReceivedOtp] = useState(sentOtp || '');
+  const [showSmsBanner, setShowSmsBanner] = useState(Boolean(sentOtp && isDevMode));
   const [otp, setOtp] = useState('');
   const [timer, setTimer] = useState(30);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
 
   useEffect(() => {
     let interval: any;
@@ -91,10 +95,13 @@ export const OtpVerificationScreen: React.FC<Props> = ({ navigation, route }) =>
       try {
         const res = await authService.sendOtp(phoneNumber);
         setLoading(false);
-        if (res.data?.otp) {
+        if (res.data?.otp && isDevMode) {
           setReceivedOtp(res.data.otp);
           setShowSmsBanner(true);
+        } else {
+          setShowSmsBanner(false);
         }
+
       } catch {
         setLoading(false);
       }
