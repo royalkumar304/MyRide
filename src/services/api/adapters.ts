@@ -12,6 +12,13 @@ import {
 } from '../../types';
 
 export function adaptBackendVehicleToMobile(v: any): Vehicle {
+  if (!v) return {} as Vehicle;
+
+  // If already adapted and has no raw backend _id, return as is to avoid duplicate allocations
+  if (v.id && v.category && v.pricePerDay !== undefined && !v._id && !v.pricing) {
+    return v as Vehicle;
+  }
+
   const typeMap: Record<string, VehicleCategory> = {
     BIKE: 'bike',
     SCOOTER: 'bike',
@@ -25,7 +32,7 @@ export function adaptBackendVehicleToMobile(v: any): Vehicle {
     ev: 'ev',
   };
 
-  const category: VehicleCategory = typeMap[v.type] || 'car';
+  const category: VehicleCategory = typeMap[v.type] || typeMap[v.category] || 'car';
   const coords = v.location?.coordinates;
   const longitude = Array.isArray(coords) && coords.length >= 2 ? coords[0] : (v.longitude || 80.9462);
   const latitude = Array.isArray(coords) && coords.length >= 2 ? coords[1] : (v.latitude || 26.8467);
@@ -40,6 +47,7 @@ export function adaptBackendVehicleToMobile(v: any): Vehicle {
 
   return {
     id: v._id ? v._id.toString() : (v.id || 'veh-' + Math.random().toString(36).substr(2, 9)),
+
     hostId: ownerId,
     hostName: ownerName,
     hostRating: v.ownerRating ?? v.hostRating ?? 4.9,

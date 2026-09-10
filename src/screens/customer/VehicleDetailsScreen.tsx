@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+
 import {
   View,
   Text,
@@ -22,7 +23,10 @@ import HostCard from '../../components/vehicle/HostCard';
 import Button from '../../components/common/Button';
 import Header from '../../components/common/Header';
 import { useAppDispatch, useAppSelector } from '../../store';
-import { toggleSaveVehicle } from '../../store/slices/vehicleSlice';
+import { ActivityIndicator } from 'react-native';
+import { upsertVehicle, toggleSaveVehicle } from '../../store/slices/vehicleSlice';
+import { vehicleService } from '../../services/vehicleService';
+import { Vehicle } from '../../types';
 import { APP_CONFIG } from '../../constants/config';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'VehicleDetails'>;
@@ -32,21 +36,72 @@ export const VehicleDetailsScreen: React.FC<Props> = ({ navigation, route }) => 
   const dispatch = useAppDispatch();
 
   const { vehicles, savedVehicleIds } = useAppSelector((state) => state.vehicles);
-  const vehicle = vehicles.find((v) => v.id === vehicleId) || vehicles[0];
+  const matchedVehicle = vehicles.find((v) => v.id === vehicleId);
 
+  const [vehicle, setVehicle] = useState<Vehicle | null>(matchedVehicle || null);
+  const [loading, setLoading] = useState(!matchedVehicle);
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [carouselWidth, setCarouselWidth] = useState(390);
-  const isSaved = savedVehicleIds.includes(vehicle.id);
+
+  useEffect(() => {
+    if (matchedVehicle) {
+      setVehicle(matchedVehicle);
+      setLoading(false);
+      return;
+    }
+
+    let isMounted = true;
+    const loadVehicle = async () => {
+      try {
+        setLoading(true);
+        const res = await vehicleService.getVehicleById(vehicleId);
+        if (isMounted && res.success && res.data) {
+          setVehicle(res.data);
+          dispatch(upsertVehicle(res.data));
+        }
+      } catch (err) {
+        console.warn('[VehicleDetailsScreen] Error loading vehicle:', err);
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    };
+
+    loadVehicle();
+    return () => {
+      isMounted = false;
+    };
+  }, [vehicleId, matchedVehicle, dispatch]);
+
+  const isSaved = vehicle ? savedVehicleIds.includes(vehicle.id) : false;
 
   const handleBookNow = () => {
-    navigation.navigate('BookingFlow', { vehicle });
+    if (vehicle) {
+      navigation.navigate('BookingFlow', { vehicle });
+    }
   };
 
   const handleChatWithHost = () => {
-    navigation.navigate('Chat', {
-      recipientName: vehicle.hostName,
-    });
+    if (vehicle) {
+      navigation.navigate('Chat', {
+        recipientName: vehicle.hostName,
+      });
+    }
   };
+
+  if (loading || !vehicle) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor={colors.surface} />
+        <Header title="Vehicle Details" onBack={() => navigation.goBack()} />
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={{ marginTop: 12, color: colors.muted, fontSize: 14 }}>
+            Loading vehicle details...
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -57,8 +112,8 @@ export const VehicleDetailsScreen: React.FC<Props> = ({ navigation, route }) => 
         rightActionIcon={isSaved ? 'heart' : 'heart-outline'}
         onRightAction={() => dispatch(toggleSaveVehicle(vehicle.id))}
       />
-
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+
         {/* Top Image Carousel */}
         <View
           style={styles.carouselContainer}

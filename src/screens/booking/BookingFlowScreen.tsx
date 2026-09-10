@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -22,6 +22,7 @@ import { useAppDispatch, useAppSelector } from '../../store';
 import { addBooking } from '../../store/slices/bookingSlice';
 import { bookingService } from '../../services/bookingService';
 import { paymentService } from '../../services/paymentService';
+import { vehicleService } from '../../services/vehicleService';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'BookingFlow'>;
 
@@ -44,16 +45,46 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
 
   // Step 4: Payment method
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethodType>('upi');
+
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+  const [quoteBreakdown, setQuoteBreakdown] = useState<any>(null);
+
+  // Live dynamic fare calculation from backend POST /vehicles/quote
+  useEffect(() => {
+    let isMounted = true;
+    const fetchQuote = async () => {
+      try {
+        const start = new Date();
+        const end = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000);
+        const res = await vehicleService.calculateFareQuote({
+          vehicleId: vehicle.id,
+          startDateTime: start.toISOString(),
+          endDateTime: end.toISOString(),
+          pickupType: pickupMethod,
+        });
+        if (isMounted && res.success && res.data?.breakdown) {
+          setQuoteBreakdown(res.data.breakdown);
+        }
+      } catch (err) {
+        console.warn('[BookingFlowScreen] Error fetching fare quote:', err);
+      }
+    };
+
+    fetchQuote();
+    return () => {
+      isMounted = false;
+    };
+  }, [vehicle.id, durationDays, pickupMethod]);
 
   // Financial calculations
   const baseRate = vehicle.pricePerDay;
-  const rentalSubtotal = baseRate * durationDays;
-  const commissionRate = APP_CONFIG.categoryCommissionPercentages[vehicle.category] || 15;
-  const myRideFee = Math.round((rentalSubtotal * commissionRate) / 100);
-  const securityDeposit = vehicle.securityDeposit;
-  const taxes = Math.round(myRideFee * 0.18); // 18% GST on platform service fee
-  const totalPayableNow = rentalSubtotal + deliveryFee + myRideFee + taxes + securityDeposit;
+  const rentalSubtotal = quoteBreakdown?.baseAmount ?? (baseRate * durationDays);
+  const commissionRate = quoteBreakdown?.commissionRate ?? (APP_CONFIG.categoryCommissionPercentages[vehicle.category] || 15);
+  const myRideFee = quoteBreakdown?.commissionAmount ?? Math.round((rentalSubtotal * commissionRate) / 100);
+  const securityDeposit = quoteBreakdown?.securityDeposit ?? vehicle.securityDeposit;
+  const taxes = quoteBreakdown?.taxes ?? Math.round(myRideFee * 0.18);
+  const totalPayableNow = quoteBreakdown?.totalAmount ?? (rentalSubtotal + deliveryFee + myRideFee + taxes + securityDeposit);
+
 
   const handleNextStep = () => {
     if (currentStep < 4) {

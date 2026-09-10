@@ -3,7 +3,36 @@ import { apiClient, ApiResponse } from './apiClient';
 import { adaptBackendVehicleToMobile } from './api/adapters';
 import { mockVehicleService } from './mock/mockVehicleService';
 
+export interface FareQuoteResponse {
+  durationHours: number;
+  durationDays: number;
+  breakdown: {
+    baseAmount: number;
+    durationDays: number;
+    deliveryFee: number;
+    commissionRate: number;
+    commissionAmount: number;
+    taxes: number;
+    discount: number;
+    securityDeposit: number;
+    totalAmount: number;
+    hostEarnings: number;
+  };
+}
+
+/**
+ * Live Vehicle Service
+ * Connects the mobile app to backend endpoints:
+ * - GET  /vehicles
+ * - GET  /vehicles/:id
+ * - GET  /vehicles/cities
+ * - POST /vehicles/quote
+ */
 export const vehicleService = {
+  /**
+   * Fetches vehicles matching filter criteria from GET /vehicles.
+   * Maps backend data to mobile Vehicle model and prevents duplicate vehicle objects.
+   */
   async getVehicles(params?: VehicleFilterParams): Promise<ApiResponse<Vehicle[]>> {
     const queryParts: string[] = [];
 
@@ -12,6 +41,7 @@ export const vehicleService = {
         queryParts.push(`city=${encodeURIComponent(params.city)}`);
       }
       if (params.category && params.category !== 'all') {
+        // Map frontend category to backend vehicleType enum (BIKE, CAR, SUV, EV)
         queryParts.push(`vehicleType=${encodeURIComponent(params.category.toUpperCase())}`);
       }
       if (params.minPrice) {
@@ -32,10 +62,22 @@ export const vehicleService = {
     }
 
     const queryString = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
-    const response = await apiClient.get<{ success: boolean; count: number; vehicles: any[] }>(`/vehicles${queryString}`);
+    const response = await apiClient.get<{ success: boolean; count: number; vehicles: any[] }>(
+      `/vehicles${queryString}`
+    );
 
     if (response.success && response.data?.vehicles && Array.isArray(response.data.vehicles)) {
-      let list = response.data.vehicles.map(adaptBackendVehicleToMobile);
+      // Deduplicate vehicles by ID to prevent duplicate vehicle objects
+      const vehicleMap = new Map<string, Vehicle>();
+
+      for (const raw of response.data.vehicles) {
+        const vehicle = adaptBackendVehicleToMobile(raw);
+        if (vehicle.id && !vehicleMap.has(vehicle.id)) {
+          vehicleMap.set(vehicle.id, vehicle);
+        }
+      }
+
+      let list = Array.from(vehicleMap.values());
 
       // Client-side text search & multi-select refinements
       if (params?.searchQuery) {
@@ -69,6 +111,9 @@ export const vehicleService = {
     return mockVehicleService.getVehicles(params);
   },
 
+  /**
+   * Fetches single vehicle details from GET /vehicles/:id.
+   */
   async getVehicleById(id: string): Promise<ApiResponse<Vehicle>> {
     const response = await apiClient.get<{ success: boolean; vehicle: any }>(`/vehicles/${id}`);
     if (response.success && response.data?.vehicle) {
@@ -82,19 +127,23 @@ export const vehicleService = {
     return mockVehicleService.getVehicleById(id);
   },
 
+  /**
+   * Calculates dynamic pricing and platform commission quote via POST /vehicles/quote.
+   */
   async calculateFareQuote(payload: {
     vehicleId: string;
     startDateTime: string;
     endDateTime: string;
     pickupType?: 'self_pickup' | 'home_delivery';
     discountAmount?: number;
-  }): Promise<ApiResponse<{ durationHours: number; durationDays: number; breakdown: any }>> {
-    const response = await apiClient.post<{
-      success: boolean;
-      durationHours: number;
-      durationDays: number;
-      breakdown: any;
-    }>('/vehicles/quote', payload);
+  }): Promise<ApiResponse<FareQuoteResponse>> {
+    const response = await apiClient.post<FareQuoteResponse>('/vehicles/quote', {
+      vehicleId: payload.vehicleId,
+      startDateTime: payload.startDateTime,
+      endDateTime: payload.endDateTime,
+      pickupType: payload.pickupType || 'self_pickup',
+      discountAmount: payload.discountAmount || 0,
+    });
 
     if (response.success && response.data) {
       return {
@@ -109,26 +158,43 @@ export const vehicleService = {
     };
   },
 
+  /**
+   * Retrieves list of supported cities from GET /vehicles/cities.
+   */
   async getSupportedCities(): Promise<ApiResponse<string[]>> {
-    const response = await apiClient.get<{ success: boolean; cities: string[] }>('/vehicles/cities');
-    if (response.success && response.data?.cities) {
+    const response = await apiClient.get<{ success: boolean; cities: any[] }>('/vehicles/cities');
+    if (response.success && response.data?.cities && Array.isArray(response.data.cities)) {
+      const cityNames: string[] = response.data.cities.map((c) =>
+        typeof c === 'string' ? c : c.name
+      );
       return {
         success: true,
-        data: response.data.cities,
+        data: cityNames,
       };
     }
+
     return {
       success: true,
       data: ['Lucknow', 'Jaipur', 'Indore', 'Bhopal', 'Patna', 'Agra', 'Varanasi', 'Kanpur'],
     };
   },
 
+  /**
+   * Fetches host vehicles from GET /host/vehicles.
+   */
   async getHostVehicles(hostId: string): Promise<ApiResponse<Vehicle[]>> {
     const response = await apiClient.get<{ success: boolean; vehicles: any[] }>('/host/vehicles');
     if (response.success && response.data?.vehicles && Array.isArray(response.data.vehicles)) {
+      const vehicleMap = new Map<string, Vehicle>();
+      for (const raw of response.data.vehicles) {
+        const vehicle = adaptBackendVehicleToMobile(raw);
+        if (vehicle.id && !vehicleMap.has(vehicle.id)) {
+          vehicleMap.set(vehicle.id, vehicle);
+        }
+      }
       return {
         success: true,
-        data: response.data.vehicles.map(adaptBackendVehicleToMobile),
+        data: Array.from(vehicleMap.values()),
       };
     }
 
@@ -136,6 +202,9 @@ export const vehicleService = {
     return mockVehicleService.getHostVehicles(hostId);
   },
 
+  /**
+   * Host adds a new vehicle via POST /host/vehicles.
+   */
   async addVehicle(vehicleData: Omit<Vehicle, 'id' | 'createdAt' | 'tripsCount' | 'rating'>): Promise<ApiResponse<Vehicle>> {
     const payload = {
       type: vehicleData.category.toUpperCase(),
@@ -169,3 +238,5 @@ export const vehicleService = {
     return mockVehicleService.addVehicle(vehicleData);
   },
 };
+
+export default vehicleService;
