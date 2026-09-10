@@ -50,9 +50,16 @@ export const authService = {
           success: true,
           data: {
             user: {
-              ...INITIAL_MOCK_USER,
-              phoneNumber: `+91 ${cleanPhone}`,
+              id: 'temp_' + cleanPhone,
               fullName: 'New MyRide User',
+              email: '',
+              phoneNumber: `+91 ${cleanPhone}`,
+              city: 'Lucknow',
+              activeRole: 'CUSTOMER',
+              isKycVerified: false,
+              drivingLicenseVerified: false,
+              referralCode: `MYR${cleanPhone.slice(-4)}`,
+              createdAt: new Date().toISOString(),
             },
             token: '',
             requiresSignup: true,
@@ -65,17 +72,29 @@ export const authService = {
         setAuthToken(response.data.token);
       }
 
-      const user = response.data.user
+      const user: User = response.data.user
         ? adaptBackendUserToMobile(response.data.user)
-        : { ...INITIAL_MOCK_USER, phoneNumber: `+91 ${cleanPhone}` };
+        : {
+            id: 'usr_' + cleanPhone,
+            fullName: 'MyRide User',
+            email: '',
+            phoneNumber: `+91 ${cleanPhone}`,
+            city: 'Lucknow',
+            activeRole: 'CUSTOMER',
+            isKycVerified: false,
+            drivingLicenseVerified: false,
+            referralCode: `MYR${cleanPhone.slice(-4)}`,
+            createdAt: new Date().toISOString(),
+          };
 
       return {
         success: true,
         data: {
           user,
-          token: response.data.token || 'jwt_token_' + Date.now(),
+          token: response.data.token || '',
         },
       };
+
     }
 
     console.warn('[authService.verifyOtp] Live API failed or offline. Using mockAuthService fallback.');
@@ -128,8 +147,10 @@ export const authService = {
       };
     }
     return {
-      success: true,
-      data: INITIAL_MOCK_USER,
+      success: false,
+      message: response.message || 'Unable to retrieve user profile',
+      error: response.error || 'GET_PROFILE_FAILED',
+      statusCode: response.statusCode,
     };
   },
 

@@ -7,13 +7,24 @@ import colors from '../../constants/colors';
 import { APP_CONFIG } from '../../constants/config';
 import { typography } from '../../constants/theme';
 
+import { useAppDispatch, useAppSelector } from '../../store';
+import { initializeAuth } from '../../store/slices/authSlice';
+
 type Props = NativeStackScreenProps<RootStackParamList, 'Splash'>;
 
 export const SplashScreen: React.FC<Props> = ({ navigation }) => {
+  const dispatch = useAppDispatch();
+  const { isAuthenticated, activeRole, isRestoringSession } = useAppSelector((state) => state.auth);
+
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.85)).current;
+  const minTimeElapsed = useRef(false);
 
   useEffect(() => {
+    // Initiate session restoration from tokenStorage
+    dispatch(initializeAuth());
+
+    // Play splash animations
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
@@ -28,12 +39,45 @@ export const SplashScreen: React.FC<Props> = ({ navigation }) => {
       }),
     ]).start();
 
-    const timer = setTimeout(() => {
-      navigation.replace('Onboarding');
-    }, 1800);
+    // Ensure splash displays for at least 1200ms
+    const minTimer = setTimeout(() => {
+      minTimeElapsed.current = true;
+      checkAndNavigate();
+    }, 1200);
 
-    return () => clearTimeout(timer);
-  }, [navigation]);
+    // Max timeout safety guard (3.5s)
+    const maxTimer = setTimeout(() => {
+      minTimeElapsed.current = true;
+      checkAndNavigate(true);
+    }, 3500);
+
+    return () => {
+      clearTimeout(minTimer);
+      clearTimeout(maxTimer);
+    };
+  }, [dispatch]);
+
+  const checkAndNavigate = (force = false) => {
+    if (!minTimeElapsed.current && !force) return;
+    if (isRestoringSession && !force) return;
+
+    if (isAuthenticated) {
+      if (activeRole === 'HOST') {
+        navigation.replace('HostMain');
+      } else {
+        navigation.replace('CustomerMain');
+      }
+    } else {
+      navigation.replace('Onboarding');
+    }
+  };
+
+  useEffect(() => {
+    if (!isRestoringSession && minTimeElapsed.current) {
+      checkAndNavigate();
+    }
+  }, [isRestoringSession, isAuthenticated, activeRole]);
+
 
   return (
     <View style={styles.container}>
