@@ -28,10 +28,11 @@ export const OtpVerificationScreen: React.FC<Props> = ({ navigation, route }) =>
   const dispatch = useAppDispatch();
 
   // In production, OTP values are never exposed to the client.
-  // The auto-fill banner is only displayed in explicit dev mode when an OTP was returned.
+  // The auto-fill banner is only displayed in dev mode for local testing without physical SMS carriers.
   const isDevMode = __DEV__ || process.env.NODE_ENV !== 'production' || process.env.EXPO_PUBLIC_DEV_MODE === 'true';
-  const [receivedOtp, setReceivedOtp] = useState(sentOtp || '');
-  const [showSmsBanner, setShowSmsBanner] = useState(Boolean(sentOtp && isDevMode));
+  const initialOtp = sentOtp || (isDevMode ? '1234' : '');
+  const [receivedOtp, setReceivedOtp] = useState(initialOtp);
+  const [showSmsBanner, setShowSmsBanner] = useState(isDevMode);
   const [otp, setOtp] = useState('');
   const [timer, setTimer] = useState(30);
   const [loading, setLoading] = useState(false);
@@ -199,6 +200,22 @@ export const OtpVerificationScreen: React.FC<Props> = ({ navigation, route }) =>
               </TouchableOpacity>
             )}
           </View>
+
+          {isDevMode && (
+            <TouchableOpacity
+              style={styles.devHintBox}
+              activeOpacity={0.8}
+              onPress={() => {
+                setOtp(receivedOtp || '1234');
+                setError('');
+              }}
+            >
+              <Ionicons name="information-circle" size={16} color={colors.primary} />
+              <Text style={styles.devHintText}>
+                Dev Mode: Tap here to fill code <Text style={styles.devHintCode}>{receivedOtp || '1234'}</Text>
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -347,6 +364,26 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.primary,
     fontWeight: '700',
+  },
+  devHintBox: {
+    marginTop: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: borderRadius.md,
+    gap: 8,
+  },
+  devHintText: {
+    fontSize: 13,
+    color: '#1E40AF',
+  },
+  devHintCode: {
+    fontWeight: '700',
+    color: colors.primary,
   },
 });
 
