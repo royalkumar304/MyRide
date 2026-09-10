@@ -7,6 +7,7 @@ export interface InMemoryDb {
   bookings: IBooking[];
   settings: IPlatformSettings;
   earnings: IHostEarning[];
+  reviews?: any[];
   auditLogs: any[];
 }
 

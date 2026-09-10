@@ -15,8 +15,18 @@ export const bookingService = {
       };
     }
 
-    console.warn('[bookingService.getBookings] Live API unreachable. Falling back to mock.');
-    return mockBookingService.getBookings(customerId);
+    // Only fallback if mock mode is explicitly requested or when live API fails during initial bootstrap
+    if (!response.success && response.error === 'NETWORK_ERROR') {
+      console.warn('[bookingService.getBookings] Network error connecting to live API. Using mock fallback.');
+      return mockBookingService.getBookings(customerId);
+    }
+
+    return {
+      success: false,
+      message: response.message || 'Failed to retrieve bookings from server',
+      error: response.error,
+      data: [],
+    };
   },
 
   async getBookingById(bookingId: string): Promise<ApiResponse<Booking>> {
@@ -29,16 +39,39 @@ export const bookingService = {
       };
     }
 
-    console.warn(`[bookingService.getBookingById] Live API failed for ${bookingId}. Using mock.`);
-    return mockBookingService.getBookingById(bookingId);
+    if (!response.success && response.error === 'NETWORK_ERROR') {
+      console.warn(`[bookingService.getBookingById] Network error for ${bookingId}. Using mock fallback.`);
+      return mockBookingService.getBookingById(bookingId);
+    }
+
+    return {
+      success: false,
+      message: response.message || `Booking ${bookingId} not found`,
+      error: response.error,
+    };
   },
 
   async createBooking(bookingData: Omit<Booking, 'id' | 'createdAt'>): Promise<ApiResponse<Booking>> {
+    let startIso = bookingData.startDate;
+    let endIso = bookingData.endDate;
+    try {
+      const parsedStart = new Date(bookingData.startDate);
+      if (!isNaN(parsedStart.getTime())) {
+        startIso = parsedStart.toISOString();
+      }
+      const parsedEnd = new Date(bookingData.endDate);
+      if (!isNaN(parsedEnd.getTime())) {
+        endIso = parsedEnd.toISOString();
+      }
+    } catch {
+      // fallback to original values
+    }
+
     const payload = {
       vehicleId: bookingData.vehicleId,
-      startDateTime: bookingData.startDate,
-      endDateTime: bookingData.endDate,
-      durationDays: bookingData.fare.durationDays || 1,
+      startDateTime: startIso,
+      endDateTime: endIso,
+      durationDays: bookingData.fare?.durationDays || 1,
       pickupType: bookingData.pickupMethod || 'self_pickup',
       pickupLocation: bookingData.pickupLocation || 'Hazratganj Hub',
       dropoffLocation: bookingData.dropoffLocation || 'Hazratganj Hub',
@@ -47,15 +80,20 @@ export const bookingService = {
     const response = await apiClient.post<{ success: boolean; booking: any; message?: string }>('/bookings', payload);
 
     if (response.success && response.data?.booking) {
+      const adapted = adaptBackendBookingToMobile(response.data.booking);
       return {
         success: true,
-        data: adaptBackendBookingToMobile(response.data.booking),
+        data: adapted,
         message: response.data.message || 'Booking reserved successfully in live database',
       };
     }
 
-    console.warn('[bookingService.createBooking] Live API failed. Using mock fallback.');
-    return mockBookingService.createBooking(bookingData);
+    return {
+      success: false,
+      message: response.message || 'Failed to create booking on server',
+      error: response.error,
+      statusCode: response.statusCode,
+    };
   },
 
   async cancelBooking(
@@ -78,18 +116,15 @@ export const bookingService = {
       return {
         success: true,
         data: adaptBackendBookingToMobile(response.data.booking),
+        message: 'Booking cancelled successfully',
       };
     }
 
-    console.warn('[bookingService.cancelBooking] Live API failed. Falling back to mock.');
-    return mockBookingService.cancelBooking(
-      bookingId,
-      reason,
-      cancelledBy,
-      refundPercentage,
-      refundAmount,
-      hostInformedCustomer
-    );
+    return {
+      success: false,
+      message: response.message || 'Failed to cancel booking on server',
+      error: response.error,
+    };
   },
 
   async startRideInspection(bookingId: string, inspection: InspectionData): Promise<ApiResponse<Booking>> {
@@ -109,11 +144,15 @@ export const bookingService = {
       return {
         success: true,
         data: adaptBackendBookingToMobile(response.data.booking),
+        message: 'Digital handover inspection recorded successfully',
       };
     }
 
-    console.warn('[bookingService.startRideInspection] Live API failed. Falling back to mock.');
-    return mockBookingService.startRideInspection(bookingId, inspection);
+    return {
+      success: false,
+      message: response.message || 'Failed to record digital handover on server',
+      error: response.error,
+    };
   },
 
   async endRideInspection(bookingId: string, inspection: InspectionData): Promise<ApiResponse<Booking>> {
@@ -133,11 +172,15 @@ export const bookingService = {
       return {
         success: true,
         data: adaptBackendBookingToMobile(response.data.booking),
+        message: 'Digital return handover completed successfully',
       };
     }
 
-    console.warn('[bookingService.endRideInspection] Live API failed. Falling back to mock.');
-    return mockBookingService.endRideInspection(bookingId, inspection);
+    return {
+      success: false,
+      message: response.message || 'Failed to complete return handover on server',
+      error: response.error,
+    };
   },
 
   async submitReview(reviewData: Omit<Review, 'id' | 'createdAt'>): Promise<ApiResponse<Review>> {

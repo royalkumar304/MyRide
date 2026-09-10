@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   Image,
   StatusBar,
+  Alert,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -98,15 +99,16 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
     setIsProcessingPayment(true);
 
     try {
+      // Create booking on live backend API
       const res = await bookingService.createBooking({
         vehicleId: vehicle.id,
         vehicle,
-        customerId: user?.id || 'usr-cust-1',
-        customerName: user?.fullName || 'Gaurav Mishra',
-        customerPhone: user?.phoneNumber || '+91 99190 77665',
+        customerId: user?.id || 'user_cust_1',
+        customerName: user?.fullName || 'Rahul Sharma',
+        customerPhone: user?.phoneNumber || '+91 98765 43210',
         hostId: vehicle.hostId,
         hostName: vehicle.hostName,
-        hostPhone: vehicle.hostPhone || '+91 98765 43210',
+        hostPhone: vehicle.hostPhone || '+91 98765 00001',
         startDate,
         endDate,
         pickupLocation: pickupMethod === 'home_delivery' ? 'Delivered to your address' : `${vehicle.area}, ${vehicle.city}`,
@@ -127,45 +129,24 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
         paymentStatus: 'completed',
       });
 
-      const confirmedBooking = res.data || {
-        id: `MYR-${Math.floor(100000 + Math.random() * 900000)}`,
-        vehicleId: vehicle.id,
-        vehicle,
-        customerId: user?.id || 'cust-curr',
-        customerName: user?.fullName || 'Gaurav Mishra',
-        customerPhone: user?.phoneNumber || '+91 99190 77665',
-        hostId: vehicle.hostId,
-        hostName: vehicle.hostName,
-        hostPhone: vehicle.hostPhone || '+91 98765 43210',
-        startDate,
-        endDate,
-        pickupLocation: pickupMethod === 'home_delivery' ? 'Delivered to your address' : `${vehicle.area}, ${vehicle.city}`,
-        dropoffLocation: `${vehicle.area}, ${vehicle.city}`,
-        pickupMethod,
-        status: 'upcoming',
-        fare: {
-          baseRental: rentalSubtotal,
-          durationDays,
-          deliveryFee,
-          myRideServiceFee: myRideFee,
-          discountAmount: 0,
-          securityDeposit,
-          taxes,
-          totalPayableNow,
-        },
-        paymentId: 'pay_rzp_' + Math.random().toString(36).substring(2, 10),
-        paymentStatus: 'completed',
-        createdAt: new Date().toISOString(),
-      };
+      if (!res.success || !res.data) {
+        Alert.alert('Booking Failed', res.message || 'Unable to reserve vehicle with backend server. Please try again.');
+        return;
+      }
+
+      // Backend booking ID must be used
+      const confirmedBooking = res.data;
 
       if (confirmedBooking.id) {
         await paymentService.simulatePayment(confirmedBooking.id).catch(() => {});
       }
 
+      // Populate Redux strictly with the backend-confirmed booking
       dispatch(addBooking(confirmedBooking));
       navigation.replace('BookingConfirmation', { booking: confirmedBooking });
-    } catch (err) {
+    } catch (err: any) {
       console.warn('[BookingFlowScreen] Error during booking creation:', err);
+      Alert.alert('Booking Error', err.message || 'Network error occurred while reserving your vehicle.');
     } finally {
       setIsProcessingPayment(false);
     }

@@ -62,6 +62,10 @@ export async function createBooking(req: any, res: Response, next: NextFunction)
 
     const bookingId = generateBookingId();
     const hostIdStr = typeof vehicle.ownerId === 'object' ? vehicle.ownerId._id : vehicle.ownerId;
+    const customerName = req.user?.name || 'Rahul Sharma';
+    const customerPhone = req.user?.phone || '9876543210';
+    const hostName = vehicle.ownerName || 'Amitabh Verma';
+    const hostPhone = vehicle.ownerPhone || '9876500001';
 
     let booking: any = null;
     if (isUsingMemoryStore()) {
@@ -70,11 +74,11 @@ export async function createBooking(req: any, res: Response, next: NextFunction)
         id: `book_${Date.now()}`,
         bookingId,
         customerId,
-        customerName: req.user?.name || 'Customer User',
-        customerPhone: req.user?.phone || '9876543210',
+        customerName,
+        customerPhone,
         hostId: hostIdStr,
-        hostName: vehicle.ownerName || 'Amitabh Verma',
-        hostPhone: vehicle.ownerPhone || '9876500001',
+        hostName,
+        hostPhone,
         vehicleId: vehicle._id,
         vehicle,
         startDateTime: start.toISOString(),
@@ -94,13 +98,18 @@ export async function createBooking(req: any, res: Response, next: NextFunction)
       booking = await BookingModel.create({
         bookingId,
         customerId,
+        customerName,
+        customerPhone,
         hostId: hostIdStr,
+        hostName,
+        hostPhone,
         vehicleId: vehicle._id,
         startDateTime: start,
         endDateTime: end,
+        durationDays,
         pickupType: body.pickupType,
-        pickupLocation: body.pickupLocation,
-        dropoffLocation: body.dropoffLocation,
+        pickupLocation: body.pickupLocation || vehicle.location?.address || 'Hazratganj Hub',
+        dropoffLocation: body.dropoffLocation || vehicle.location?.address || 'Hazratganj Hub',
         pricing: pricingBreakdown,
         bookingStatus: 'PAYMENT_PENDING',
         paymentStatus: 'pending',
@@ -119,7 +128,7 @@ export async function createBooking(req: any, res: Response, next: NextFunction)
 
 export async function getBookings(req: any, res: Response, next: NextFunction) {
   try {
-    const userId = req.user?.userId || 'user_cust_1';
+    const userId = req.user?.userId || '6a9e4e50b4a29f4bdb7b6898';
     const role = req.user?.role || 'CUSTOMER';
 
     let bookings: any[] = [];
@@ -136,8 +145,12 @@ export async function getBookings(req: any, res: Response, next: NextFunction) {
       });
     } else {
       const filter: any = {};
-      if (role === 'HOST') filter.hostId = userId;
-      else if (role !== 'ADMIN') filter.customerId = userId;
+      const isValidId = /^[0-9a-fA-F]{24}$/.test(userId);
+      if (role === 'HOST') {
+        if (isValidId) filter.hostId = userId;
+      } else if (role !== 'ADMIN') {
+        if (isValidId) filter.customerId = userId;
+      }
 
       bookings = await BookingModel.find(filter)
         .populate('vehicleId')
@@ -170,8 +183,12 @@ export async function getBookingById(req: any, res: Response, next: NextFunction
         booking = { ...booking, vehicle: veh, customer: cust, host };
       }
     } else {
+      const isObjectId = /^[0-9a-fA-F]{24}$/.test(id);
       booking = await BookingModel.findOne({
-        $or: [{ _id: id }, { bookingId: id }],
+        $or: [
+          ...(isObjectId ? [{ _id: id }] : []),
+          { bookingId: id },
+        ],
       })
         .populate('vehicleId')
         .populate('customerId', 'name phone')
@@ -196,7 +213,7 @@ export async function startHandover(req: any, res: Response, next: NextFunction)
 
     let booking: any = null;
     if (isUsingMemoryStore()) {
-      booking = memoryStore.bookings.find((b) => b._id === id || b.bookingId === id);
+      booking = memoryStore.bookings.find((b) => b._id === id || b.bookingId === id || b.id === id);
       if (booking) {
         booking.bookingStatus = 'ACTIVE';
         booking.startInspection = {
@@ -215,8 +232,14 @@ export async function startHandover(req: any, res: Response, next: NextFunction)
         };
       }
     } else {
-      booking = await BookingModel.findByIdAndUpdate(
-        id,
+      const isObjectId = /^[0-9a-fA-F]{24}$/.test(id);
+      booking = await BookingModel.findOneAndUpdate(
+        {
+          $or: [
+            ...(isObjectId ? [{ _id: id }] : []),
+            { bookingId: id },
+          ],
+        },
         {
           bookingStatus: 'ACTIVE',
           'startInspection.odometerReading': odometerReading,
@@ -226,6 +249,11 @@ export async function startHandover(req: any, res: Response, next: NextFunction)
         },
         { new: true }
       );
+    }
+
+    if (!booking) {
+      res.status(404).json({ success: false, message: 'Booking not found' });
+      return;
     }
 
     res.json({
@@ -245,7 +273,7 @@ export async function completeHandover(req: any, res: Response, next: NextFuncti
 
     let booking: any = null;
     if (isUsingMemoryStore()) {
-      booking = memoryStore.bookings.find((b) => b._id === id || b.bookingId === id);
+      booking = memoryStore.bookings.find((b) => b._id === id || b.bookingId === id || b.id === id);
       if (booking) {
         booking.bookingStatus = 'COMPLETED';
         booking.endInspection = {
@@ -286,8 +314,14 @@ export async function completeHandover(req: any, res: Response, next: NextFuncti
         memoryStore.earnings.push(earningRecord);
       }
     } else {
-      booking = await BookingModel.findByIdAndUpdate(
-        id,
+      const isObjectId = /^[0-9a-fA-F]{24}$/.test(id);
+      booking = await BookingModel.findOneAndUpdate(
+        {
+          $or: [
+            ...(isObjectId ? [{ _id: id }] : []),
+            { bookingId: id },
+          ],
+        },
         {
           bookingStatus: 'COMPLETED',
           'endInspection.odometerReading': odometerReading,
@@ -297,6 +331,11 @@ export async function completeHandover(req: any, res: Response, next: NextFuncti
         },
         { new: true }
       );
+    }
+
+    if (!booking) {
+      res.status(404).json({ success: false, message: 'Booking not found' });
+      return;
     }
 
     res.json({
@@ -327,8 +366,14 @@ export async function cancelBooking(req: any, res: Response, next: NextFunction)
         booking.hostInformedCustomer = hostInformedCustomer;
       }
     } else {
+      const isObjectId = /^[0-9a-fA-F]{24}$/.test(id);
       booking = await BookingModel.findOneAndUpdate(
-        { $or: [{ _id: id }, { bookingId: id }] },
+        {
+          $or: [
+            ...(isObjectId ? [{ _id: id }] : []),
+            { bookingId: id },
+          ],
+        },
         {
           bookingStatus: 'CANCELLED',
           cancellationReason: reason,

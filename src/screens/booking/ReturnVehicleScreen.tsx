@@ -8,6 +8,7 @@ import HandoverChecklist from '../../components/booking/HandoverChecklist';
 import { InspectionData } from '../../types';
 import { useAppDispatch } from '../../store';
 import { setEndInspection } from '../../store/slices/bookingSlice';
+import { bookingService } from '../../services/bookingService';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ReturnVehicle'>;
 
@@ -16,27 +17,39 @@ export const ReturnVehicleScreen: React.FC<Props> = ({ navigation, route }) => {
   const dispatch = useAppDispatch();
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (inspection: InspectionData) => {
+  const handleSubmit = async (inspection: InspectionData) => {
     setLoading(true);
-    setTimeout(() => {
+    try {
+      const res = await bookingService.endRideInspection(bookingId, inspection);
       setLoading(false);
-      dispatch(setEndInspection({ id: bookingId, inspection }));
-      Alert.alert(
-        'Vehicle Returned 🎉',
-        'Thank you! Your security deposit refund has been initiated and will reach your account within 2 hours.',
-        [
-          {
-            text: 'Rate Ride',
-            onPress: () =>
-              navigation.replace('Review', {
-                bookingId,
-                vehicleId: 'veh-003',
-                vehicleName: 'Hyundai i20 Sportz',
-              }),
-          },
-        ]
-      );
-    }, 600);
+
+      if (res.success && res.data) {
+        dispatch(setEndInspection({ id: bookingId, inspection: res.data.endInspection || inspection }));
+        Alert.alert(
+          'Vehicle Returned 🎉',
+          'Thank you! Your return handover verification has been saved to the server and security deposit refund initiated.',
+          [
+            {
+              text: 'Rate Ride',
+              onPress: () =>
+                navigation.replace('Review', {
+                  bookingId,
+                  vehicleId: res.data?.vehicleId || 'veh-003',
+                  vehicleName: res.data?.vehicle ? `${res.data.vehicle.brand} ${res.data.vehicle.model}` : 'Vehicle',
+                }),
+            },
+          ]
+        );
+      } else {
+        Alert.alert(
+          'Return Failed',
+          res.message || 'Unable to complete vehicle return on server. Please try again.'
+        );
+      }
+    } catch (err: any) {
+      setLoading(false);
+      Alert.alert('Error', err.message || 'Network error occurred while connecting to server.');
+    }
   };
 
   return (

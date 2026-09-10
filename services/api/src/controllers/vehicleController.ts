@@ -44,12 +44,12 @@ export async function listVehicles(req: Request, res: Response, next: NextFuncti
         if (effectiveMaxPrice && v.pricing.dailyRate > effectiveMaxPrice) return false;
         if (seats && (v.seats ?? 0) < seats) return false;
         if (rating && (v.rating ?? 0) < rating) return false;
-        if (distance && (v.distanceKm ?? 0) > distance) return false;
+        if (distance && ((v as any).distanceKm ?? 0) > distance) return false;
         if (availability && availability !== 'all' && v.availability?.isAvailable === false) return false;
         if (q) {
           const search = q.toLowerCase();
           const matches =
-            v.name?.toLowerCase().includes(search) ||
+            ((v as any).name?.toLowerCase().includes(search)) ||
             v.brand?.toLowerCase().includes(search) ||
             v.model?.toLowerCase().includes(search) ||
             v.location?.city?.toLowerCase().includes(search) ||

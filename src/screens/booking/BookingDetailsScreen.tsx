@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   Alert,
   StatusBar,
   Modal,
+  ActivityIndicator,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -20,7 +21,8 @@ import Badge from '../../components/common/Badge';
 import Button from '../../components/common/Button';
 import Header from '../../components/common/Header';
 import { useAppDispatch, useAppSelector } from '../../store';
-import { updateBookingStatus, cancelBookingWithRefund } from '../../store/slices/bookingSlice';
+import { updateBookingStatus, cancelBookingWithRefund, fetchBookingById } from '../../store/slices/bookingSlice';
+import { bookingService } from '../../services/bookingService';
 import { calculateCancellationRefund } from '../../utils/cancellationPolicy';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'BookingDetails'>;
@@ -36,57 +38,109 @@ const CANCELLATION_REASONS = [
 export const BookingDetailsScreen: React.FC<Props> = ({ navigation, route }) => {
   const { bookingId } = route.params;
   const dispatch = useAppDispatch();
-  const { bookings } = useAppSelector((state) => state.bookings);
+  const { bookings, activeBooking, isLoading } = useAppSelector((state) => state.bookings);
 
-  const booking = bookings.find((b) => b.id === bookingId) || bookings[0];
+  useEffect(() => {
+    if (bookingId) {
+      dispatch(fetchBookingById(bookingId));
+    }
+  }, [bookingId, dispatch]);
+
+  const booking = bookings.find((b) => b.id === bookingId) || (activeBooking?.id === bookingId ? activeBooking : bookings[0]);
 
   // Cancellation Modal state
   const [isCancelModalVisible, setIsCancelModalVisible] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
   const [selectedReason, setSelectedReason] = useState(CANCELLATION_REASONS[0]);
 
   // Compute live cancellation refund status
   const refundCalc = calculateCancellationRefund(
-    booking.startDate,
-    booking.fare.totalPayableNow,
-    booking.fare.securityDeposit
+    booking?.startDate || new Date().toISOString(),
+    booking?.fare?.totalPayableNow || 0,
+    booking?.fare?.securityDeposit || 0
   );
 
   const handleStartRide = () => {
-    navigation.navigate('DigitalPickup', { bookingId: booking.id });
+    if (booking) {
+      navigation.navigate('DigitalPickup', { bookingId: booking.id });
+    }
   };
 
   const handleEndRide = () => {
-    navigation.navigate('ReturnVehicle', { bookingId: booking.id });
+    if (booking) {
+      navigation.navigate('ReturnVehicle', { bookingId: booking.id });
+    }
   };
 
   const handleOpenCancelModal = () => {
     setIsCancelModalVisible(true);
   };
 
-  const handleConfirmCancellation = () => {
-    setIsCancelModalVisible(false);
+  const handleConfirmCancellation = async () => {
+    if (!booking) return;
+    setIsCancelling(true);
 
-    dispatch(
-      cancelBookingWithRefund({
-        id: booking.id,
-        reason: selectedReason,
-        cancelledBy: 'customer',
-        refundPercentage: refundCalc.refundPercentage,
-        refundAmount: refundCalc.refundAmount,
-      })
-    );
+    try {
+      // Cancel on live backend server
+      const res = await bookingService.cancelBooking(
+        booking.id,
+        selectedReason,
+        'customer',
+        refundCalc.refundPercentage,
+        refundCalc.refundAmount
+      );
 
-    const message =
-      refundCalc.refundPercentage === 100
-        ? `Booking cancelled successfully. A full 100% refund of ₹${refundCalc.refundAmount} has been processed back to your payment method.`
-        : `Booking cancelled. Per policy, 0% refund applies as this was cancelled within 24 hours of ride start.`;
+      setIsCancelling(false);
+      setIsCancelModalVisible(false);
 
-    Alert.alert(
-      refundCalc.refundPercentage === 100 ? '100% Refund Initiated 🎉' : 'Booking Cancelled (0% Refund)',
-      message,
-      [{ text: 'OK' }]
-    );
+      dispatch(
+        cancelBookingWithRefund({
+          id: booking.id,
+          reason: selectedReason,
+          cancelledBy: 'customer',
+          refundPercentage: refundCalc.refundPercentage,
+          refundAmount: refundCalc.refundAmount,
+        })
+      );
+
+      const message =
+        refundCalc.refundPercentage === 100
+          ? `Booking cancelled successfully. A full 100% refund of ₹${refundCalc.refundAmount} has been processed back to your payment method.`
+          : `Booking cancelled. Per policy, 0% refund applies as this was cancelled within 24 hours of ride start.`;
+
+      Alert.alert(
+        refundCalc.refundPercentage === 100 ? '100% Refund Initiated 🎉' : 'Booking Cancelled (0% Refund)',
+        message,
+        [{ text: 'OK' }]
+      );
+    } catch (err: any) {
+      setIsCancelling(false);
+      Alert.alert('Cancellation Error', err.message || 'Failed to cancel booking on server.');
+    }
   };
+
+  if (!booking && isLoading) {
+    return (
+      <SafeAreaView style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
+        <Text style={{ marginTop: 12, ...typography.body, color: colors.darkMuted }}>
+          Loading booking details from server...
+        </Text>
+      </SafeAreaView>
+    );
+  }
+
+  if (!booking) {
+    return (
+      <SafeAreaView style={[styles.container, { justifyContent: 'center', alignItems: 'center', padding: 24 }]}>
+        <Text style={{ ...typography.h3, color: colors.dark, marginBottom: 8 }}>Booking Not Found</Text>
+        <Text style={{ ...typography.body, color: colors.darkMuted, textAlign: 'center', marginBottom: 20 }}>
+          The requested booking could not be retrieved from the server.
+        </Text>
+        <Button title="Go Back" onPress={() => navigation.goBack()} />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>

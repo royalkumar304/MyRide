@@ -1,3 +1,5 @@
+import { isUsingMemoryStore } from '../config/db';
+import { memoryStore } from '../config/store';
 import BookingModel from '../models/Booking';
 import VehicleModel from '../models/Vehicle';
 import { isTimeOverlap } from '@myride/utils';
@@ -10,16 +12,24 @@ export async function checkVehicleAvailability(params: {
   isAvailable: boolean;
   reason?: string;
 }> {
-  const vehicle = await VehicleModel.findById(params.vehicleId);
+  let vehicle: any = null;
+  if (isUsingMemoryStore()) {
+    vehicle = memoryStore.vehicles.find(
+      (v) => v._id === params.vehicleId || v.id === params.vehicleId
+    );
+  } else {
+    vehicle = await VehicleModel.findById(params.vehicleId);
+  }
+
   if (!vehicle) {
     return { isAvailable: false, reason: 'Vehicle not found' };
   }
 
-  if (vehicle.verificationStatus !== 'APPROVED') {
+  if (vehicle.verificationStatus && vehicle.verificationStatus !== 'APPROVED') {
     return { isAvailable: false, reason: 'Vehicle is currently not approved for public rental' };
   }
 
-  if (!vehicle.availability.isAvailable) {
+  if (vehicle.availability && !vehicle.availability.isAvailable) {
     return { isAvailable: false, reason: 'Host has temporarily paused vehicle availability' };
   }
 
@@ -28,6 +38,25 @@ export async function checkVehicleAvailability(params: {
 
   if (startReq >= endReq) {
     return { isAvailable: false, reason: 'Return date & time must be after pickup date & time' };
+  }
+
+  if (isUsingMemoryStore()) {
+    const conflictingBookings = memoryStore.bookings.filter(
+      (b) =>
+        (b.vehicleId === params.vehicleId || (b.vehicle && b.vehicle._id === params.vehicleId)) &&
+        ['CREATED', 'PAYMENT_PENDING', 'CONFIRMED', 'UPCOMING', 'PICKUP_PENDING', 'ACTIVE'].includes(b.bookingStatus) &&
+        new Date(b.startDateTime) < endReq &&
+        new Date(b.endDateTime) > startReq
+    );
+
+    if (conflictingBookings.length > 0) {
+      return {
+        isAvailable: false,
+        reason: 'Sorry, this vehicle is already booked for the selected dates and times.',
+      };
+    }
+
+    return { isAvailable: true };
   }
 
   // Query database for conflicting active/confirmed bookings

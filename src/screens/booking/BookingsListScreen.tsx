@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,8 @@ import {
   FlatList,
   TouchableOpacity,
   StatusBar,
+  ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -16,15 +18,26 @@ import colors from '../../constants/colors';
 import { borderRadius, typography } from '../../constants/theme';
 import BookingCard from '../../components/booking/BookingCard';
 import EmptyState from '../../components/common/EmptyState';
-import { useAppSelector } from '../../store';
+import Button from '../../components/common/Button';
+import { useAppDispatch, useAppSelector } from '../../store';
+import { fetchBookings } from '../../store/slices/bookingSlice';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 export const BookingsListScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
-  const { bookings } = useAppSelector((state) => state.bookings);
+  const dispatch = useAppDispatch();
+  const { bookings, isLoading, error } = useAppSelector((state) => state.bookings);
 
   const [activeTab, setActiveTab] = useState<BookingStatus>('upcoming');
+
+  useEffect(() => {
+    dispatch(fetchBookings(undefined));
+  }, [dispatch]);
+
+  const handleRefresh = () => {
+    dispatch(fetchBookings(undefined));
+  };
 
   const tabs: { key: BookingStatus; label: string }[] = [
     { key: 'upcoming', label: 'Upcoming' },
@@ -62,30 +75,55 @@ export const BookingsListScreen: React.FC = () => {
         })}
       </View>
 
+      {/* Error Banner with Retry */}
+      {error && (
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity onPress={handleRefresh} style={styles.retryBtn}>
+            <Text style={styles.retryBtnText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* Bookings List */}
-      <FlatList
-        data={filteredBookings}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContent}
-        showsVerticalScrollIndicator={false}
-        ListEmptyComponent={
-          <EmptyState
-            icon="calendar-outline"
-            title="No rides booked yet"
-            subtitle={`You have no ${activeTab} rentals right now.`}
-            actionTitle="Find a Ride"
-            onAction={() => navigation.navigate('CustomerMain')}
-          />
-        }
-        renderItem={({ item }) => (
-          <BookingCard
-            booking={item}
-            onPress={() =>
-              navigation.navigate('BookingDetails', { bookingId: item.id })
-            }
-          />
-        )}
-      />
+      {isLoading && bookings.length === 0 ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={styles.loadingText}>Loading your rides from server...</Text>
+        </View>
+      ) : (
+        <FlatList
+          data={filteredBookings}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={isLoading}
+              onRefresh={handleRefresh}
+              colors={[colors.primary]}
+              tintColor={colors.primary}
+            />
+          }
+          ListEmptyComponent={
+            <EmptyState
+              icon="calendar-outline"
+              title="No rides booked yet"
+              subtitle={`You have no ${activeTab} rentals right now.`}
+              actionTitle="Find a Ride"
+              onAction={() => navigation.navigate('CustomerMain')}
+            />
+          }
+          renderItem={({ item }) => (
+            <BookingCard
+              booking={item}
+              onPress={() =>
+                navigation.navigate('BookingDetails', { bookingId: item.id })
+              }
+            />
+          )}
+        />
+      )}
     </SafeAreaView>
   );
 };
@@ -134,6 +172,45 @@ const styles = StyleSheet.create({
   },
   listContent: {
     padding: 16,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  loadingText: {
+    marginTop: 12,
+    ...typography.body,
+    color: colors.darkMuted,
+  },
+  errorContainer: {
+    backgroundColor: '#FEE2E2',
+    margin: 16,
+    marginBottom: 0,
+    padding: 12,
+    borderRadius: borderRadius.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  errorText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#DC2626',
+    fontWeight: '500',
+  },
+  retryBtn: {
+    backgroundColor: '#DC2626',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: borderRadius.sm,
+    marginLeft: 8,
+  },
+  retryBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600',
   },
 });
 

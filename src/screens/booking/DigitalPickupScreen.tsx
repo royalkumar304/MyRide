@@ -8,6 +8,7 @@ import HandoverChecklist from '../../components/booking/HandoverChecklist';
 import { InspectionData } from '../../types';
 import { useAppDispatch } from '../../store';
 import { setStartInspection } from '../../store/slices/bookingSlice';
+import { bookingService } from '../../services/bookingService';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'DigitalPickup'>;
 
@@ -16,22 +17,34 @@ export const DigitalPickupScreen: React.FC<Props> = ({ navigation, route }) => {
   const dispatch = useAppDispatch();
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (inspection: InspectionData) => {
+  const handleSubmit = async (inspection: InspectionData) => {
     setLoading(true);
-    setTimeout(() => {
+    try {
+      const res = await bookingService.startRideInspection(bookingId, inspection);
       setLoading(false);
-      dispatch(setStartInspection({ id: bookingId, inspection }));
-      Alert.alert(
-        'Ride Started! 🚗💨',
-        'Vehicle handover inspection recorded successfully. Have a safe journey!',
-        [
-          {
-            text: 'View Booking',
-            onPress: () => navigation.replace('BookingDetails', { bookingId }),
-          },
-        ]
-      );
-    }, 600);
+
+      if (res.success && res.data) {
+        dispatch(setStartInspection({ id: bookingId, inspection: res.data.startInspection || inspection }));
+        Alert.alert(
+          'Ride Started! 🚗💨',
+          'Vehicle handover inspection recorded successfully on server. Have a safe journey!',
+          [
+            {
+              text: 'View Booking',
+              onPress: () => navigation.replace('BookingDetails', { bookingId }),
+            },
+          ]
+        );
+      } else {
+        Alert.alert(
+          'Handover Failed',
+          res.message || 'Unable to record vehicle pickup handover on backend server.'
+        );
+      }
+    } catch (err: any) {
+      setLoading(false);
+      Alert.alert('Error', err.message || 'Network error occurred while connecting to server.');
+    }
   };
 
   return (
