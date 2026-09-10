@@ -11,10 +11,16 @@ export async function createPaymentOrder(req: any, res: Response, next: NextFunc
     const { bookingId } = req.body;
 
     let booking: any = null;
+    const isObjectId = /^[0-9a-fA-F]{24}$/.test(bookingId);
     if (isUsingMemoryStore()) {
       booking = memoryStore.bookings.find((b) => b._id === bookingId || b.bookingId === bookingId);
     } else {
-      booking = await BookingModel.findOne({ $or: [{ _id: bookingId }, { bookingId }] });
+      booking = await BookingModel.findOne({
+        $or: [
+          ...(isObjectId ? [{ _id: bookingId }] : []),
+          { bookingId },
+        ],
+      });
     }
 
     if (!booking) {
@@ -22,7 +28,8 @@ export async function createPaymentOrder(req: any, res: Response, next: NextFunc
       return;
     }
 
-    const amountInPaisa = Math.round(booking.pricingBreakdown.totalPayable * 100);
+    const totalAmount = booking.pricing?.totalAmount || 0;
+    const amountInPaisa = Math.round(totalAmount * 100);
     const razorpayOrder = await createRazorpayOrder({
       amount: amountInPaisa,
       currency: 'INR',
@@ -60,6 +67,7 @@ export async function verifyPayment(req: any, res: Response, next: NextFunction)
     }
 
     let booking: any = null;
+    const isObjectId = /^[0-9a-fA-F]{24}$/.test(bookingId);
     if (isUsingMemoryStore()) {
       booking = memoryStore.bookings.find((b) => b._id === bookingId || b.bookingId === bookingId);
       if (booking) {
@@ -68,7 +76,12 @@ export async function verifyPayment(req: any, res: Response, next: NextFunction)
       }
     } else {
       booking = await BookingModel.findOneAndUpdate(
-        { $or: [{ _id: bookingId }, { bookingId }] },
+        {
+          $or: [
+            ...(isObjectId ? [{ _id: bookingId }] : []),
+            { bookingId },
+          ],
+        },
         { paymentStatus: 'PAID', bookingStatus: 'CONFIRMED' },
         { new: true }
       );
@@ -77,7 +90,7 @@ export async function verifyPayment(req: any, res: Response, next: NextFunction)
         await PaymentModel.create({
           bookingId: booking._id,
           customerId: booking.customerId,
-          amount: booking.pricingBreakdown.totalPayable,
+          amount: booking.pricing?.totalAmount || 0,
           currency: 'INR',
           paymentMethod: 'UPI',
           razorpayOrderId,

@@ -3,6 +3,7 @@ import {
   VehicleCategory,
   Booking,
   BookingStatus,
+  BookingPricing,
   BookingFare,
   PickupMethod,
   User,
@@ -110,16 +111,40 @@ export function adaptBackendBookingStatus(status: string): BookingStatus {
 }
 
 export function adaptBackendBookingToMobile(b: any): Booking {
-  const pricing = b.pricing || b.pricingBreakdown || {};
+  const p = b.pricing || {};
+  const baseAmount = Number(p.baseAmount || 1000);
+  const durationDays = Number(b.durationDays || p.durationDays || 1);
+  const deliveryFee = Number(p.deliveryFee || 0);
+  const commissionRate = Number(p.commissionRate || 15);
+  const commissionAmount = Number(p.commissionAmount || Math.round((baseAmount * commissionRate) / 100));
+  const taxes = Number(p.taxes || Math.round(commissionAmount * 0.18));
+  const discount = Number(p.discount || 0);
+  const securityDeposit = Number(p.securityDeposit || 2000);
+  const totalAmount = Number(p.totalAmount || (baseAmount + deliveryFee - discount + commissionAmount + taxes + securityDeposit));
+  const hostEarnings = Number(p.hostEarnings || (baseAmount - commissionAmount));
+
+  const pricing: BookingPricing = {
+    baseAmount,
+    durationDays,
+    deliveryFee,
+    commissionRate,
+    commissionAmount,
+    taxes,
+    discount,
+    securityDeposit,
+    totalAmount,
+    hostEarnings,
+  };
+
   const fare: BookingFare = {
-    baseRental: pricing.baseAmount || pricing.rentalSubtotal || 1000,
-    durationDays: b.durationDays || pricing.durationDays || 1,
-    deliveryFee: pricing.deliveryFee || 0,
-    myRideServiceFee: pricing.commissionAmount || pricing.serviceFee || 150,
-    discountAmount: pricing.discount || 0,
-    securityDeposit: pricing.securityDeposit || 2000,
-    taxes: pricing.taxes || Math.round((pricing.commissionAmount || 150) * 0.18),
-    totalPayableNow: pricing.totalAmount || pricing.totalPayable || 3300,
+    baseRental: baseAmount,
+    durationDays,
+    deliveryFee,
+    myRideServiceFee: commissionAmount,
+    discountAmount: discount,
+    securityDeposit,
+    taxes,
+    totalPayableNow: totalAmount,
   };
 
   const vehicle = b.vehicle
@@ -145,6 +170,7 @@ export function adaptBackendBookingToMobile(b: any): Booking {
     dropoffLocation: b.dropoffLocation || b.dropoffAddress || 'Hazratganj Hub, Lucknow',
     pickupMethod,
 
+    pricing,
     fare,
     status: adaptBackendBookingStatus(b.bookingStatus || b.status),
     paymentStatus: b.paymentStatus === 'PAID' ? 'completed' : (b.paymentStatus || 'pending'),

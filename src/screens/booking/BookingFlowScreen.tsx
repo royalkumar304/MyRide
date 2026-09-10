@@ -72,7 +72,7 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [isQuoteLoading, setIsQuoteLoading] = useState(false);
   const [quoteError, setQuoteError] = useState<string | null>(null);
-  const [quoteBreakdown, setQuoteBreakdown] = useState<any>(null);
+  const [quotePricing, setQuotePricing] = useState<any>(null);
 
   // Live dynamic fare calculation from backend POST /vehicles/quote (Server is source of truth)
   useEffect(() => {
@@ -91,7 +91,7 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
         if (isMounted) {
           setIsQuoteLoading(false);
           if (res.success && res.data?.breakdown) {
-            setQuoteBreakdown(res.data.breakdown);
+            setQuotePricing(res.data.breakdown);
           } else {
             setQuoteError(res.message || 'Unable to retrieve verified quote from server');
           }
@@ -111,17 +111,17 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
     };
   }, [vehicle.id, startDateTimeIso, endDateTimeIso, pickupMethod]);
 
-  // Server-authorized pricing breakdown (The backend is the source of truth)
+  // Server-authorized pricing (The backend is the source of truth)
   // Never trust frontend client pricing, commissions, taxes, deposit, or total
-  const isServerPricingReady = !isQuoteLoading && !!quoteBreakdown;
+  const isServerPricingReady = !isQuoteLoading && !!quotePricing;
 
-  const rentalSubtotal = quoteBreakdown?.baseAmount ?? (vehicle.pricePerDay * durationDays);
-  const deliveryFee = quoteBreakdown?.deliveryFee ?? (pickupMethod === 'home_delivery' ? (vehicle.deliveryFee || 200) : 0);
-  const commissionRate = quoteBreakdown?.commissionRate ?? (APP_CONFIG.categoryCommissionPercentages[vehicle.category] || 15);
-  const myRideFee = quoteBreakdown?.commissionAmount ?? Math.round((rentalSubtotal * commissionRate) / 100);
-  const securityDeposit = quoteBreakdown?.securityDeposit ?? vehicle.securityDeposit;
-  const taxes = quoteBreakdown?.taxes ?? Math.round(myRideFee * 0.18);
-  const totalPayableNow = quoteBreakdown?.totalAmount ?? (rentalSubtotal + deliveryFee + myRideFee + taxes + securityDeposit);
+  const rentalSubtotal = quotePricing?.baseAmount ?? (vehicle.pricePerDay * durationDays);
+  const deliveryFee = quotePricing?.deliveryFee ?? (pickupMethod === 'home_delivery' ? (vehicle.deliveryFee || 200) : 0);
+  const commissionRate = quotePricing?.commissionRate ?? (APP_CONFIG.categoryCommissionPercentages[vehicle.category] || 15);
+  const myRideFee = quotePricing?.commissionAmount ?? Math.round((rentalSubtotal * commissionRate) / 100);
+  const securityDeposit = quotePricing?.securityDeposit ?? vehicle.securityDeposit;
+  const taxes = quotePricing?.taxes ?? Math.round(myRideFee * 0.18);
+  const totalPayableNow = quotePricing?.totalAmount ?? (rentalSubtotal + deliveryFee + myRideFee + taxes + securityDeposit);
 
   const handleNextStep = () => {
     if (currentStep < 4) {
@@ -153,6 +153,18 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
         dropoffLocation: `${vehicle.area}, ${vehicle.city}`,
         pickupMethod,
         status: 'upcoming',
+        pricing: {
+          baseAmount: rentalSubtotal,
+          durationDays,
+          deliveryFee,
+          commissionRate,
+          commissionAmount: myRideFee,
+          taxes,
+          discount: 0,
+          securityDeposit,
+          totalAmount: totalPayableNow,
+          hostEarnings: rentalSubtotal - myRideFee,
+        },
         fare: {
           // Frontend estimates - backend definitively recalculates and enforces server pricing
           baseRental: rentalSubtotal,
@@ -179,11 +191,11 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
 
       console.log('[BookingFlowScreen] Final server-authorized pricing applied:', {
         bookingId: confirmedBooking.id,
-        serverBaseRental: backendFare?.baseRental,
-        serverCommission: backendFare?.myRideServiceFee,
-        serverTaxes: backendFare?.taxes,
-        serverDeposit: backendFare?.securityDeposit,
-        serverTotalPayable: backendFare?.totalPayableNow,
+        serverBaseAmount: confirmedBooking.pricing?.baseAmount,
+        serverCommission: confirmedBooking.pricing?.commissionAmount,
+        serverTaxes: confirmedBooking.pricing?.taxes,
+        serverDeposit: confirmedBooking.pricing?.securityDeposit,
+        serverTotalAmount: confirmedBooking.pricing?.totalAmount,
       });
 
       if (confirmedBooking.id) {
@@ -383,7 +395,7 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
                   <ActivityIndicator size="small" color={colors.primary} />
                   <Text style={styles.serverQuoteBadgeTextLoading}>Calculating server quote...</Text>
                 </View>
-              ) : quoteBreakdown ? (
+              ) : quotePricing ? (
                 <View style={styles.serverQuoteBadge}>
                   <Ionicons name="shield-checkmark" size={14} color="#03543F" />
                   <Text style={styles.serverQuoteBadgeText}>
@@ -420,7 +432,7 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
 
               <View style={styles.reviewRow}>
                 <Text style={styles.reviewLabel}>
-                  Base Rental (₹{quoteBreakdown?.baseAmount ? Math.round(quoteBreakdown.baseAmount / durationDays) : vehicle.pricePerDay} × {durationDays})
+                  Base Rental (₹{quotePricing?.baseAmount ? Math.round(quotePricing.baseAmount / durationDays) : vehicle.pricePerDay} × {durationDays})
                 </Text>
                 <Text style={styles.reviewValue}>₹{rentalSubtotal}</Text>
               </View>

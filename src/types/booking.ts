@@ -20,6 +20,19 @@ export interface InspectionData {
   timestamp: string;
 }
 
+export interface BookingPricing {
+  baseAmount: number;
+  durationDays: number;
+  deliveryFee: number;
+  commissionRate: number;
+  commissionAmount: number;
+  taxes: number;
+  discount: number;
+  securityDeposit: number;
+  totalAmount: number;
+  hostEarnings: number;
+}
+
 export interface BookingFare {
   baseRental: number;        // e.g. ₹1,499 * days
   durationDays: number;
@@ -49,6 +62,7 @@ export interface Booking {
   pickupMethod: PickupMethod;
   
   status: BookingStatus;
+  pricing: BookingPricing;
   fare: BookingFare;
   paymentId?: string;
   paymentStatus: 'pending' | 'completed' | 'failed' | 'refunded';

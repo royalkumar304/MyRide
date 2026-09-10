@@ -22,9 +22,9 @@ export async function getAdminStats(req: any, res: Response, next: NextFunction)
       bookings = await BookingModel.find();
     }
 
-    const totalGMV = bookings.reduce((sum, b) => sum + (b.pricingBreakdown?.totalPayable || 0), 0);
+    const totalGMV = bookings.reduce((sum, b) => sum + (b.pricing?.totalAmount || 0), 0);
     const totalCommissionEarned = bookings.reduce(
-      (sum, b) => sum + (b.pricingBreakdown?.platformCommissionAmount || 0),
+      (sum, b) => sum + (b.pricing?.commissionAmount || 0),
       0
     );
 

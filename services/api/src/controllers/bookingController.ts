@@ -51,7 +51,7 @@ export async function createBooking(req: any, res: Response, next: NextFunction)
     const vType = (vehicle.type || 'CAR').toUpperCase() as VehicleType;
 
     // Server-side calculation using dynamic PlatformSettings commission
-    const pricingBreakdown = await calculateBookingPrice({
+    const pricing = await calculateBookingPrice({
       dailyRate: vehicle.pricing.dailyRate,
       durationDays,
       vehicleType: vType,
@@ -87,7 +87,7 @@ export async function createBooking(req: any, res: Response, next: NextFunction)
         pickupType: body.pickupType,
         pickupLocation: body.pickupLocation || vehicle.location?.address || 'Hazratganj Hub',
         dropoffLocation: body.dropoffLocation || vehicle.location?.address || 'Hazratganj Hub',
-        pricing: pricingBreakdown,
+        pricing,
         bookingStatus: 'PAYMENT_PENDING',
         paymentStatus: 'pending',
         createdAt: new Date().toISOString(),
@@ -110,7 +110,7 @@ export async function createBooking(req: any, res: Response, next: NextFunction)
         pickupType: body.pickupType,
         pickupLocation: body.pickupLocation || vehicle.location?.address || 'Hazratganj Hub',
         dropoffLocation: body.dropoffLocation || vehicle.location?.address || 'Hazratganj Hub',
-        pricing: pricingBreakdown,
+        pricing,
         bookingStatus: 'PAYMENT_PENDING',
         paymentStatus: 'pending',
       });
