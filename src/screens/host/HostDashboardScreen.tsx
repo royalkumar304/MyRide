@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   Image,
   StatusBar,
+  RefreshControl,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -17,14 +18,34 @@ import colors from '../../constants/colors';
 import { borderRadius, shadows, typography } from '../../constants/theme';
 import Badge from '../../components/common/Badge';
 import Button from '../../components/common/Button';
-import { useAppSelector } from '../../store';
+import { useAppDispatch, useAppSelector } from '../../store';
+import { fetchHostDashboard, fetchHostVehicles } from '../../store/slices/hostSlice';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 export const HostDashboardScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
-  const { summary, hostVehicles } = useAppSelector((state) => state.host);
+  const dispatch = useAppDispatch();
+  const { summary, hostVehicles, isLoading } = useAppSelector((state) => state.host);
   const { user } = useAppSelector((state) => state.auth);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const loadData = async () => {
+    await Promise.all([
+      dispatch(fetchHostDashboard()),
+      dispatch(fetchHostVehicles()),
+    ]);
+  };
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadData();
+    setRefreshing(false);
+  };
 
   const firstName = user?.fullName?.split(' ')[0] || 'Rahul';
 
@@ -48,7 +69,18 @@ export const HostDashboardScreen: React.FC = () => {
         </TouchableOpacity>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={[colors.primary]}
+            tintColor={colors.primary}
+          />
+        }
+      >
         {/* Earnings Overview Card */}
         <View style={styles.overviewCard}>
           <View style={styles.overviewTop}>
@@ -108,39 +140,56 @@ export const HostDashboardScreen: React.FC = () => {
         </View>
 
         {/* Host Vehicle Cards */}
-        {hostVehicles.map((veh) => (
-          <View key={veh.id} style={styles.vehicleCard}>
-            <Image source={{ uri: veh.images[0] }} style={styles.vehicleImg} />
+        {hostVehicles.length === 0 ? (
+          <View style={styles.emptyVehiclesCard}>
+            <Ionicons name="car-sport-outline" size={40} color={colors.muted} style={{ marginBottom: 8 }} />
+            <Text style={styles.emptyVehiclesTitle}>No Vehicles Listed Yet</Text>
+            <Text style={styles.emptyVehiclesSub}>
+              Earn up to ₹25,000/month by listing your car, bike, or scooter with verified KYC renters.
+            </Text>
+            <Button
+              title="List Your First Vehicle"
+              onPress={() => navigation.navigate('AddVehicleWizard')}
+              variant="primary"
+              size="sm"
+              style={{ marginTop: 12 }}
+            />
+          </View>
+        ) : (
+          hostVehicles.map((veh) => (
+            <View key={veh.id} style={styles.vehicleCard}>
+              <Image source={{ uri: veh.images[0] }} style={styles.vehicleImg} />
 
-            <View style={styles.vehicleDetails}>
-              <View style={styles.vehicleTitleRow}>
-                <Text style={styles.vehicleName} numberOfLines={1}>
-                  {veh.name}
-                </Text>
-                <Badge
-                  label={veh.status.replace('_', ' ').toUpperCase()}
-                  variant={
-                    veh.status === 'available'
-                      ? 'success'
-                      : veh.status === 'booked'
-                      ? 'primary'
-                      : 'warning'
-                  }
-                  size="sm"
-                />
-              </View>
+              <View style={styles.vehicleDetails}>
+                <View style={styles.vehicleTitleRow}>
+                  <Text style={styles.vehicleName} numberOfLines={1}>
+                    {veh.name}
+                  </Text>
+                  <Badge
+                    label={veh.status.replace('_', ' ').toUpperCase()}
+                    variant={
+                      veh.status === 'available'
+                        ? 'success'
+                        : veh.status === 'booked'
+                        ? 'primary'
+                        : 'warning'
+                    }
+                    size="sm"
+                  />
+                </View>
 
-              <Text style={styles.vehicleReg}>{veh.registrationNumber}</Text>
+                <Text style={styles.vehicleReg}>{veh.registrationNumber}</Text>
 
-              <View style={styles.vehicleStatsRow}>
-                <Text style={styles.vehicleRate}>₹{veh.pricePerDay}/day</Text>
-                <Text style={styles.vehicleTrips}>
-                  ⭐ {veh.rating.toFixed(1)} • {veh.tripsCount} trips completed
-                </Text>
+                <View style={styles.vehicleStatsRow}>
+                  <Text style={styles.vehicleRate}>₹{veh.pricePerDay}/day</Text>
+                  <Text style={styles.vehicleTrips}>
+                    ⭐ {veh.rating.toFixed(1)} • {veh.tripsCount} trips completed
+                  </Text>
+                </View>
               </View>
             </View>
-          </View>
-        ))}
+          ))
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -339,6 +388,29 @@ const styles = StyleSheet.create({
   vehicleTrips: {
     ...typography.caption,
     color: colors.body,
+  },
+  emptyVehiclesCard: {
+    backgroundColor: colors.surface,
+    borderRadius: borderRadius.lg,
+    padding: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    borderStyle: 'dashed',
+    ...shadows.subtle,
+  },
+  emptyVehiclesTitle: {
+    ...typography.bodyBold,
+    color: colors.dark,
+    marginBottom: 4,
+  },
+  emptyVehiclesSub: {
+    fontSize: 12,
+    color: colors.muted,
+    textAlign: 'center',
+    lineHeight: 18,
+    paddingHorizontal: 12,
   },
 });
 

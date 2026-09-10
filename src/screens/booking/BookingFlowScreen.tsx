@@ -23,7 +23,6 @@ import { APP_CONFIG } from '../../constants/config';
 import { useAppDispatch, useAppSelector } from '../../store';
 import { addBooking } from '../../store/slices/bookingSlice';
 import { bookingService } from '../../services/bookingService';
-import { paymentService } from '../../services/paymentService';
 import { vehicleService } from '../../services/vehicleService';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'BookingFlow'>;
@@ -176,8 +175,7 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
           taxes,
           totalPayableNow,
         },
-        paymentId: 'pay_rzp_' + Math.random().toString(36).substring(2, 10),
-        paymentStatus: 'completed',
+        paymentStatus: 'pending',
       });
 
       if (!res.success || !res.data) {
@@ -197,10 +195,6 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
         serverDeposit: confirmedBooking.pricing?.securityDeposit,
         serverTotalAmount: confirmedBooking.pricing?.totalAmount,
       });
-
-      if (confirmedBooking.id) {
-        await paymentService.simulatePayment(confirmedBooking.id).catch(() => {});
-      }
 
       // Populate Redux strictly with the backend-confirmed booking
       dispatch(addBooking(confirmedBooking));

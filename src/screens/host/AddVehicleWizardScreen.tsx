@@ -20,7 +20,7 @@ import Header from '../../components/common/Header';
 import Input from '../../components/common/Input';
 import Button from '../../components/common/Button';
 import { useAppDispatch, useAppSelector } from '../../store';
-import { addHostVehicle } from '../../store/slices/hostSlice';
+import { addHostVehicle, createHostVehicleThunk } from '../../store/slices/hostSlice';
 import { setVehicles } from '../../store/slices/vehicleSlice';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'AddVehicleWizard'>;
@@ -76,53 +76,66 @@ export const AddVehicleWizardScreen: React.FC<Props> = ({ navigation }) => {
     }
   };
 
-  const handleSubmitListing = () => {
-    setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
-      const newVeh: Vehicle = {
-        id: 'veh-' + Date.now(),
-        hostId: user?.id || 'host-curr',
-        hostName: user?.fullName || 'Rahul Verma',
-        hostRating: 5.0,
-        hostTrips: 0,
-        hostPhone: user?.phoneNumber || '+91 98765 43210',
-        isHostVerified: true,
-        category,
-        name: `${brand} ${model}`,
-        brand,
-        model,
-        variant,
-        year: parseInt(year, 10) || 2023,
-        registrationNumber: regNumber,
-        fuelType,
-        transmission,
-        seatingCapacity: parseInt(seatingCapacity, 10) || 5,
-        rating: 5.0,
-        tripsCount: 0,
-        city: user?.city || 'Lucknow',
-        area: 'Gomti Nagar',
-        distanceKm: 1.5,
-        latitude: 26.8500,
-        longitude: 80.9990,
-        pricePerDay: parseInt(pricePerDay, 10) || 1299,
-        pricePerHour: parseInt(pricePerHour, 10) || 140,
-        securityDeposit: parseInt(securityDeposit, 10) || 2000,
-        deliveryAvailable: true,
-        deliveryFee: parseInt(deliveryFee, 10) || 200,
-        instantBooking: true,
-        images: photos,
-        features: ['Air Conditioning', 'Power Steering', 'Bluetooth Audio', 'Fastag', 'Clean Sanitized'],
-        status: 'pending_verification',
-        createdAt: new Date().toISOString(),
-      };
+  const handleSubmitListing = async () => {
+    // 1. Form Validation
+    const cleanReg = (regNumber || '').trim().toUpperCase();
+    if (!cleanReg || cleanReg.length < 6) {
+      Alert.alert('Validation Error', 'Please enter a valid vehicle registration number (e.g. UP 32 AB 1234).');
+      setCurrentStep(2);
+      return;
+    }
 
-      dispatch(addHostVehicle(newVeh));
-      dispatch(setVehicles([newVeh, ...vehicles]));
+    const cleanDailyRate = parseInt(pricePerDay, 10);
+    if (isNaN(cleanDailyRate) || cleanDailyRate < 100) {
+      Alert.alert('Validation Error', 'Please set a valid daily rental price of at least ₹100.');
+      setCurrentStep(3);
+      return;
+    }
+
+    const cleanDeposit = parseInt(securityDeposit, 10);
+    if (isNaN(cleanDeposit) || cleanDeposit < 0) {
+      Alert.alert('Validation Error', 'Please specify a valid security deposit.');
+      setCurrentStep(3);
+      return;
+    }
+
+    const backendType: 'BIKE' | 'SCOOTER' | 'CAR' | 'SUV' | 'EV' =
+      category === 'bike' ? 'BIKE' : category === 'suv' ? 'SUV' : category === 'ev' ? 'EV' : 'CAR';
+
+    const validImages = photos && photos.length > 0
+      ? photos
+      : ['https://images.unsplash.com/photo-1549399542-7e3f8b79c341?w=800&q=80'];
+
+    const vehiclePayload = {
+      type: backendType,
+      brand: brand.trim() || 'Hyundai',
+      model: model.trim() || 'i20',
+      variant: variant?.trim() || 'Sportz',
+      year: parseInt(year, 10) || 2023,
+      registrationNumber: cleanReg,
+      fuelType: (fuelType as any) || 'Petrol',
+      transmission: (transmission as any) || 'Manual',
+      seats: parseInt(seatingCapacity, 10) || 5,
+      dailyRate: cleanDailyRate,
+      securityDeposit: cleanDeposit,
+      deliveryFee: parseInt(deliveryFee, 10) || 150,
+      city: user?.city || 'Lucknow',
+      area: 'Gomti Nagar',
+      images: validImages,
+      features: ['Air Conditioning', 'Power Steering', 'Bluetooth Audio', 'Fastag', 'Clean Sanitized'],
+    };
+
+    setLoading(true);
+    try {
+      // 2. Dispatch to backend POST /host/vehicles -> backend validation -> MongoDB
+      const createdVehicle = await dispatch(createHostVehicleThunk(vehiclePayload)).unwrap();
+
+      // 3. Update vehicles catalog in Redux
+      dispatch(setVehicles([createdVehicle, ...vehicles]));
 
       Alert.alert(
         'Listing Submitted! 🎉',
-        'Your vehicle has been submitted for verification. MyRide admin team will verify documents within 2-4 hours.',
+        'Your vehicle has been successfully recorded in the backend database and submitted for admin document verification.',
         [
           {
             text: 'Go to Dashboard',
@@ -130,7 +143,15 @@ export const AddVehicleWizardScreen: React.FC<Props> = ({ navigation }) => {
           },
         ]
       );
-    }, 1000);
+    } catch (err: any) {
+      console.warn('[AddVehicleWizard] Backend vehicle creation failed:', err);
+      Alert.alert(
+        'Listing Submission Failed',
+        typeof err === 'string' ? err : (err?.message || 'Failed to submit vehicle listing to server. Please verify fields and try again.')
+      );
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (

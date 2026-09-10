@@ -124,8 +124,42 @@ export async function createHostVehicle(req: any, res: Response, next: NextFunct
       vehicle = await VehicleModel.create({
         ownerId: hostId,
         ownerName: req.user?.name || 'Host User',
-        ...body,
+        ownerRating: 5.0,
+        isHostVerified: true,
+        type: body.type,
+        brand: body.brand,
+        model: body.model,
+        variant: body.variant,
+        year: body.year,
+        registrationNumber: body.registrationNumber,
+        fuelType: body.fuelType,
+        transmission: body.transmission,
+        seats: body.seats,
+        pricing: {
+          dailyRate: body.dailyRate,
+          securityDeposit: body.securityDeposit,
+          deliveryFee: body.deliveryFee || 150,
+        },
+        securityDeposit: body.securityDeposit,
+        location: {
+          type: 'Point',
+          coordinates: [80.9462, 26.8467],
+          address: `${body.area}, ${body.city}`,
+          area: body.area,
+          city: body.city,
+          state: 'Uttar Pradesh',
+        },
+        images: body.images,
+        features: body.features || [],
+        guidelines: ['Standard vehicle guidelines apply.'],
+        availability: {
+          isAvailable: true,
+        },
         verificationStatus: 'PENDING',
+        rating: 5.0,
+        totalTrips: 0,
+        deliveryAvailable: true,
+        instantBooking: true,
       });
     }
 

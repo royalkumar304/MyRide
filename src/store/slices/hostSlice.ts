@@ -1,6 +1,7 @@
-import { createSlice, PayloadAction } from '@reduxjs/toolkit';
+import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { HostEarningsSummary, Vehicle, Booking } from '../../types';
-import { MOCK_HOST_SUMMARY, MOCK_VEHICLES, MOCK_BOOKINGS } from '../../services/mockData';
+import { MOCK_HOST_SUMMARY } from '../../services/mockData';
+import { hostService } from '../../services/hostService';
 
 interface HostState {
   summary: HostEarningsSummary;
@@ -12,11 +13,44 @@ interface HostState {
 
 const initialState: HostState = {
   summary: MOCK_HOST_SUMMARY,
-  hostVehicles: [MOCK_VEHICLES[0], MOCK_VEHICLES[2]], // Rahul & Priya vehicles
-  hostBookings: MOCK_BOOKINGS,
+  hostVehicles: [],
+  hostBookings: [],
   isLoading: false,
   error: null,
 };
+
+export const fetchHostDashboard = createAsyncThunk(
+  'host/fetchDashboard',
+  async (_, { rejectWithValue }) => {
+    const res = await hostService.getHostDashboard();
+    if (!res.success || !res.data) {
+      return rejectWithValue(res.message || 'Failed to fetch host dashboard');
+    }
+    return res.data;
+  }
+);
+
+export const fetchHostVehicles = createAsyncThunk(
+  'host/fetchVehicles',
+  async (_, { rejectWithValue }) => {
+    const res = await hostService.getHostVehicles();
+    if (!res.success || !res.data) {
+      return rejectWithValue(res.message || 'Failed to fetch host vehicles');
+    }
+    return res.data;
+  }
+);
+
+export const createHostVehicleThunk = createAsyncThunk(
+  'host/createVehicle',
+  async (vehicleData: any, { rejectWithValue }) => {
+    const res = await hostService.createHostVehicle(vehicleData);
+    if (!res.success || !res.data) {
+      return rejectWithValue(res.message || 'Failed to create host vehicle');
+    }
+    return res.data;
+  }
+);
 
 export const hostSlice = createSlice({
   name: 'host',
@@ -24,6 +58,9 @@ export const hostSlice = createSlice({
   reducers: {
     setHostSummary: (state, action: PayloadAction<HostEarningsSummary>) => {
       state.summary = action.payload;
+    },
+    setHostVehicles: (state, action: PayloadAction<Vehicle[]>) => {
+      state.hostVehicles = action.payload;
     },
     addHostVehicle: (state, action: PayloadAction<Vehicle>) => {
       state.hostVehicles.unshift(action.payload);
@@ -73,10 +110,60 @@ export const hostSlice = createSlice({
       state.isLoading = action.payload;
     },
   },
+  extraReducers: (builder) => {
+    // Dashboard
+    builder
+      .addCase(fetchHostDashboard.pending, (state) => {
+        state.isLoading = true;
+        state.error = null;
+      })
+      .addCase(fetchHostDashboard.fulfilled, (state, action) => {
+        state.isLoading = false;
+        state.summary = action.payload.summary;
+        if (action.payload.recentBookings && action.payload.recentBookings.length > 0) {
+          state.hostBookings = action.payload.recentBookings;
+        }
+      })
+      .addCase(fetchHostDashboard.rejected, (state, action) => {
+        state.isLoading = false;
+        state.error = action.payload as string;
+      });
+
+    // Host Vehicles
+    builder
+      .addCase(fetchHostVehicles.pending, (state) => {
+        state.isLoading = true;
+        state.error = null;
+      })
+      .addCase(fetchHostVehicles.fulfilled, (state, action) => {
+        state.isLoading = false;
+        state.hostVehicles = action.payload;
+      })
+      .addCase(fetchHostVehicles.rejected, (state, action) => {
+        state.isLoading = false;
+        state.error = action.payload as string;
+      });
+
+    // Create Vehicle
+    builder
+      .addCase(createHostVehicleThunk.pending, (state) => {
+        state.isLoading = true;
+        state.error = null;
+      })
+      .addCase(createHostVehicleThunk.fulfilled, (state, action) => {
+        state.isLoading = false;
+        state.hostVehicles.unshift(action.payload);
+      })
+      .addCase(createHostVehicleThunk.rejected, (state, action) => {
+        state.isLoading = false;
+        state.error = action.payload as string;
+      });
+  },
 });
 
 export const {
   setHostSummary,
+  setHostVehicles,
   addHostVehicle,
   updateHostBookingStatus,
   hostCancelBooking,

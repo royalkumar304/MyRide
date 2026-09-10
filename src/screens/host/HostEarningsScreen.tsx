@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   Alert,
   StatusBar,
+  RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import colors from '../../constants/colors';
@@ -15,15 +16,26 @@ import { borderRadius, shadows, typography } from '../../constants/theme';
 import Button from '../../components/common/Button';
 import Header from '../../components/common/Header';
 import { useAppDispatch, useAppSelector } from '../../store';
-import { deductBalanceAfterPayout } from '../../store/slices/hostSlice';
+import { deductBalanceAfterPayout, fetchHostDashboard } from '../../store/slices/hostSlice';
 import { hostService } from '../../services/hostService';
 
 export const HostEarningsScreen: React.FC = () => {
   const dispatch = useAppDispatch();
-  const { summary } = useAppSelector((state) => state.host);
+  const { summary, isLoading } = useAppSelector((state) => state.host);
 
   const [period, setPeriod] = useState<'daily' | 'weekly' | 'monthly'>('monthly');
   const [isWithdrawing, setIsWithdrawing] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    dispatch(fetchHostDashboard());
+  }, []);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await dispatch(fetchHostDashboard());
+    setRefreshing(false);
+  };
 
   const handleWithdraw = async () => {
     if (summary.availableBalance <= 0) {
@@ -62,7 +74,18 @@ export const HostEarningsScreen: React.FC = () => {
       <StatusBar barStyle="dark-content" backgroundColor={colors.surface} />
       <Header title="Host Earnings & Commission" />
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={[colors.primary]}
+            tintColor={colors.primary}
+          />
+        }
+      >
         {/* Gross vs Net Card */}
         <View style={styles.mainCard}>
           <Text style={styles.balanceLabel}>Available for Withdrawal</Text>

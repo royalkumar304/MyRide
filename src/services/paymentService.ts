@@ -1,19 +1,31 @@
 import { PaymentTransaction, PaymentMethodType } from '../types';
 import { apiClient, ApiResponse } from './apiClient';
-import { mockPaymentService } from './mock/mockPaymentService';
+
+export interface RazorpayOrderData {
+  orderId: string;
+  amount: number;
+  currency: string;
+  keyId: string;
+  bookingId: string;
+}
+
+export interface PaymentVerificationPayload {
+  bookingId: string;
+  razorpayOrderId: string;
+  razorpayPaymentId: string;
+  razorpaySignature: string;
+  paymentMethod: PaymentMethodType;
+}
 
 export const paymentService = {
+  /**
+   * Prepares and fetches official Razorpay order from backend API:
+   * POST /payments/create-order
+   * Does NOT generate fake order IDs in mobile code.
+   */
   async createRazorpayOrder(
-    amountInInr: number,
-    receiptId: string
-  ): Promise<
-    ApiResponse<{
-      orderId: string;
-      amount: number;
-      currency: string;
-      keyId: string;
-    }>
-  > {
+    bookingId: string
+  ): Promise<ApiResponse<RazorpayOrderData>> {
     const response = await apiClient.post<{
       success: boolean;
       order: {
@@ -23,7 +35,8 @@ export const paymentService = {
         key: string;
         bookingId: string;
       };
-    }>('/payments/create-order', { bookingId: receiptId });
+      message?: string;
+    }>('/payments/create-order', { bookingId });
 
     if (response.success && response.data?.order) {
       return {
@@ -33,23 +46,66 @@ export const paymentService = {
           amount: response.data.order.amount,
           currency: response.data.order.currency,
           keyId: response.data.order.key,
+          bookingId: response.data.order.bookingId,
         },
       };
     }
 
-    console.warn('[paymentService.createRazorpayOrder] Live API failed. Falling back to mock.');
-    return mockPaymentService.createRazorpayOrder(amountInInr, receiptId);
+    return {
+      success: false,
+      message: response.message || 'Failed to create payment order on backend server',
+      error: response.error,
+      statusCode: response.statusCode,
+    };
   },
 
+  /**
+   * Submits Razorpay payment signature to backend API for validation:
+   * POST /payments/verify
+   * Does NOT mark bookings as paid locally.
+   */
+  async verifyPayment(paymentDetails: PaymentVerificationPayload): Promise<ApiResponse<{
+    success: boolean;
+    message: string;
+    booking?: any;
+  }>> {
+    const response = await apiClient.post<{ success: boolean; message: string; booking: any }>(
+      '/payments/verify',
+      {
+        bookingId: paymentDetails.bookingId,
+        razorpayOrderId: paymentDetails.razorpayOrderId,
+        razorpayPaymentId: paymentDetails.razorpayPaymentId,
+        razorpaySignature: paymentDetails.razorpaySignature,
+        paymentMethod: paymentDetails.paymentMethod,
+      }
+    );
+
+    if (response.success && response.data) {
+      return {
+        success: true,
+        data: response.data,
+        message: response.data.message || 'Payment verified successfully by backend server',
+      };
+    }
+
+    return {
+      success: false,
+      message: response.message || 'Payment verification failed on server',
+      error: response.error,
+      statusCode: response.statusCode,
+    };
+  },
+
+  // Alias for backward compatibility
   async verifyPaymentSignature(paymentDetails: {
     bookingId: string;
     razorpayOrderId: string;
     razorpayPaymentId: string;
     razorpaySignature: string;
-    amount: number;
+    amount?: number;
     method: PaymentMethodType;
   }): Promise<ApiResponse<PaymentTransaction>> {
-    const response = await apiClient.post<{ success: boolean; booking: any }>('/payments/verify', {
+    const verifyRes = await this.verifyPayment({
       bookingId: paymentDetails.bookingId,
       razorpayOrderId: paymentDetails.razorpayOrderId,
       razorpayPaymentId: paymentDetails.razorpayPaymentId,
@@ -57,52 +113,29 @@ export const paymentService = {
       paymentMethod: paymentDetails.method,
     });
 
-    if (response.success) {
-      const transaction: PaymentTransaction = {
-        id: 'tx-' + Date.now(),
-        bookingId: paymentDetails.bookingId,
-        razorpayOrderId: paymentDetails.razorpayOrderId,
-        razorpayPaymentId: paymentDetails.razorpayPaymentId,
-        razorpaySignature: paymentDetails.razorpaySignature,
-        amount: paymentDetails.amount,
-        currency: 'INR',
-        method: paymentDetails.method,
-        status: 'captured',
-        createdAt: new Date().toISOString(),
-      };
-      return {
-        success: true,
-        data: transaction,
-      };
-    }
-
-    console.warn('[paymentService.verifyPaymentSignature] Live API failed. Falling back to mock.');
-    return mockPaymentService.verifyPaymentSignature(paymentDetails);
-  },
-
-  async simulatePayment(bookingId: string): Promise<ApiResponse<{ success: boolean; message: string; booking?: any }>> {
-    const response = await apiClient.post<{ success: boolean; message: string; booking: any }>(
-      '/payments/simulate',
-      { bookingId }
-    );
-
-    if (response.success) {
+    if (verifyRes.success) {
       return {
         success: true,
         data: {
-          success: true,
-          message: response.data?.message || 'Payment simulated successfully in backend database',
-          booking: response.data?.booking,
+          id: 'tx-' + Date.now(),
+          bookingId: paymentDetails.bookingId,
+          razorpayOrderId: paymentDetails.razorpayOrderId,
+          razorpayPaymentId: paymentDetails.razorpayPaymentId,
+          razorpaySignature: paymentDetails.razorpaySignature,
+          amount: paymentDetails.amount || 0,
+          currency: 'INR',
+          method: paymentDetails.method,
+          status: 'captured',
+          createdAt: new Date().toISOString(),
         },
       };
     }
 
     return {
-      success: true,
-      data: {
-        success: true,
-        message: 'Payment simulated locally',
-      },
+      success: false,
+      message: verifyRes.message,
+      error: verifyRes.error,
+      statusCode: verifyRes.statusCode,
     };
   },
 };
