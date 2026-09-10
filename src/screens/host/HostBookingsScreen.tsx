@@ -10,6 +10,7 @@ import {
   StatusBar,
   Modal,
   TextInput,
+  RefreshControl,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -20,11 +21,16 @@ import { borderRadius, shadows, typography } from '../../constants/theme';
 import Badge from '../../components/common/Badge';
 import Button from '../../components/common/Button';
 import EmptyState from '../../components/common/EmptyState';
+import ErrorState from '../../components/common/ErrorState';
+import Loader from '../../components/common/Loader';
+import { isNetworkError } from '../../services/errorHandler';
 import { useAppDispatch, useAppSelector } from '../../store';
 import {
   updateHostBookingStatus,
   hostCancelBooking,
   hostRescheduleBooking,
+  fetchHostBookings,
+  hostCancelBookingThunk,
 } from '../../store/slices/hostSlice';
 import {
   cancelBookingWithRefund,
@@ -41,9 +47,14 @@ type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 export const HostBookingsScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
   const dispatch = useAppDispatch();
-  const { hostBookings } = useAppSelector((state) => state.host);
+  const { hostBookings, isLoading, error } = useAppSelector((state) => state.host);
 
   const [activeTab, setActiveTab] = useState<'requests' | 'confirmed' | 'active' | 'completed'>('confirmed');
+
+  // Load live server bookings on mount
+  React.useEffect(() => {
+    dispatch(fetchHostBookings());
+  }, [dispatch]);
 
   // Selected booking for action
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
@@ -175,35 +186,36 @@ export const HostBookingsScreen: React.FC = () => {
     );
   };
 
-  const handleConfirmHostCancel = () => {
+  const handleConfirmHostCancel = async () => {
     if (!selectedBooking) return;
 
-    // Update in host slice
-    dispatch(
-      hostCancelBooking({
-        id: selectedBooking.id,
-        reason: cancelReason,
-        hostInformedCustomer: hasInformedCustomer,
-      })
-    );
+    try {
+      // Execute cancellation on live backend server
+      const actionRes = await dispatch(
+        hostCancelBookingThunk({
+          bookingId: selectedBooking.id,
+          reason: cancelReason,
+          refundAmount: selectedBooking.fare.totalPayableNow,
+          hostInformedCustomer: hasInformedCustomer,
+        })
+      );
 
-    // Update in customer booking slice (100% refund always for host cancellation)
-    dispatch(
-      cancelBookingWithRefund({
-        id: selectedBooking.id,
-        reason: `Cancelled by Host: ${cancelReason}`,
-        cancelledBy: 'host',
-        refundPercentage: 100,
-        refundAmount: selectedBooking.fare.totalPayableNow,
-        hostInformedCustomer: hasInformedCustomer,
-      })
-    );
+      setIsCancelModalVisible(false);
 
-    setIsCancelModalVisible(false);
-    Alert.alert(
-      'Booking Cancelled',
-      `Booking ${selectedBooking.id} has been cancelled. 100% full refund has been initiated to the customer.`
-    );
+      if (hostCancelBookingThunk.fulfilled.match(actionRes)) {
+        // Refetch latest server bookings cache
+        dispatch(fetchHostBookings());
+        Alert.alert(
+          'Booking Cancelled',
+          `Booking ${selectedBooking.id} has been cancelled. 100% full refund has been initiated to the customer.`
+        );
+      } else {
+        Alert.alert('Cancellation Error', (actionRes.payload as string) || 'Failed to cancel booking on server');
+      }
+    } catch (err: any) {
+      setIsCancelModalVisible(false);
+      Alert.alert('Error', err.message || 'Error communicating with server');
+    }
   };
 
   return (
@@ -232,19 +244,39 @@ export const HostBookingsScreen: React.FC = () => {
         })}
       </View>
 
-      {/* List */}
-      <FlatList
-        data={filteredBookings}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContent}
-        showsVerticalScrollIndicator={false}
-        ListEmptyComponent={
-          <EmptyState
-            icon="document-text-outline"
-            title={`No ${activeTab} bookings`}
-            subtitle="New customer booking requests will appear here."
-          />
-        }
+      {/* 1. Loading State */}
+      {isLoading && hostBookings.length === 0 ? (
+        <Loader message="Loading host bookings..." />
+      ) : error && hostBookings.length === 0 ? (
+        /* 2. Error State */
+        <ErrorState
+          isOffline={isNetworkError(error)}
+          message={error}
+          retryAction={() => dispatch(fetchHostBookings())}
+          style={{ flex: 1 }}
+        />
+      ) : (
+        /* 3. List & 4. Empty State */
+        <FlatList
+          data={filteredBookings}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={isLoading}
+              onRefresh={() => dispatch(fetchHostBookings())}
+              colors={[colors.primary]}
+              tintColor={colors.primary}
+            />
+          }
+          ListEmptyComponent={
+            <EmptyState
+              icon="document-text-outline"
+              title={`No ${activeTab} bookings`}
+              subtitle="New customer booking requests will appear here."
+            />
+          }
         renderItem={({ item }) => {
           const eligibility = checkHostChangeEligibility(item.startDate);
 
@@ -395,6 +427,7 @@ export const HostBookingsScreen: React.FC = () => {
           );
         }}
       />
+      )}
 
       {/* Modal 1: Mandatory Customer Informing (Within 24 Hours) */}
       <Modal

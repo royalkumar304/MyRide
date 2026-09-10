@@ -95,6 +95,38 @@ export const completeHandoverThunk = createAsyncThunk(
   }
 );
 
+export const cancelBookingThunk = createAsyncThunk(
+  'bookings/cancelBookingThunk',
+  async (
+    payload: {
+      bookingId: string;
+      reason: string;
+      cancelledBy: 'customer' | 'host';
+      refundPercentage: 100 | 0;
+      refundAmount?: number;
+      hostInformedCustomer?: boolean;
+    },
+    { rejectWithValue }
+  ) => {
+    try {
+      const res = await bookingService.cancelBooking(
+        payload.bookingId,
+        payload.reason,
+        payload.cancelledBy,
+        payload.refundPercentage,
+        payload.refundAmount,
+        payload.hostInformedCustomer
+      );
+      if (!res.success || !res.data) {
+        return rejectWithValue(res.message || 'Failed to cancel booking on server');
+      }
+      return res.data;
+    } catch (err: any) {
+      return rejectWithValue(err.message || 'Failed to cancel booking');
+    }
+  }
+);
+
 export const bookingSlice = createSlice({
   name: 'bookings',
   initialState,
@@ -272,6 +304,19 @@ export const bookingSlice = createSlice({
       const index = state.bookings.findIndex((b) => b.id === action.payload.id);
       if (index >= 0) {
         state.bookings[index] = action.payload;
+      }
+    });
+
+    // cancelBookingThunk
+    builder.addCase(cancelBookingThunk.fulfilled, (state, action) => {
+      const index = state.bookings.findIndex((b) => b.id === action.payload.id);
+      if (index >= 0) {
+        state.bookings[index] = action.payload;
+      } else {
+        state.bookings.unshift(action.payload);
+      }
+      if (state.activeBooking?.id === action.payload.id) {
+        state.activeBooking = action.payload;
       }
     });
   },

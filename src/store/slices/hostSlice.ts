@@ -2,6 +2,7 @@ import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { HostEarningsSummary, Vehicle, Booking } from '../../types';
 import { MOCK_HOST_SUMMARY } from '../../services/mockData';
 import { hostService } from '../../services/hostService';
+import { bookingService } from '../../services/bookingService';
 
 interface HostState {
   summary: HostEarningsSummary;
@@ -41,12 +42,49 @@ export const fetchHostVehicles = createAsyncThunk(
   }
 );
 
+export const fetchHostBookings = createAsyncThunk(
+  'host/fetchBookings',
+  async (_, { rejectWithValue }) => {
+    const res = await hostService.getHostBookings();
+    if (!res.success || !res.data) {
+      return rejectWithValue(res.message || 'Failed to fetch host bookings');
+    }
+    return res.data;
+  }
+);
+
 export const createHostVehicleThunk = createAsyncThunk(
   'host/createVehicle',
   async (vehicleData: any, { rejectWithValue }) => {
     const res = await hostService.createHostVehicle(vehicleData);
     if (!res.success || !res.data) {
       return rejectWithValue(res.message || 'Failed to create host vehicle');
+    }
+    return res.data;
+  }
+);
+
+export const hostCancelBookingThunk = createAsyncThunk(
+  'host/cancelBooking',
+  async (
+    payload: {
+      bookingId: string;
+      reason: string;
+      refundAmount: number;
+      hostInformedCustomer: boolean;
+    },
+    { rejectWithValue }
+  ) => {
+    const res = await bookingService.cancelBooking(
+      payload.bookingId,
+      payload.reason,
+      'host',
+      100,
+      payload.refundAmount,
+      payload.hostInformedCustomer
+    );
+    if (!res.success || !res.data) {
+      return rejectWithValue(res.message || 'Failed to cancel host booking on server');
     }
     return res.data;
   }
@@ -157,6 +195,30 @@ export const hostSlice = createSlice({
       .addCase(createHostVehicleThunk.rejected, (state, action) => {
         state.isLoading = false;
         state.error = action.payload as string;
+      });
+
+    // Host Bookings
+    builder
+      .addCase(fetchHostBookings.pending, (state) => {
+        state.isLoading = true;
+        state.error = null;
+      })
+      .addCase(fetchHostBookings.fulfilled, (state, action) => {
+        state.isLoading = false;
+        state.hostBookings = action.payload;
+      })
+      .addCase(fetchHostBookings.rejected, (state, action) => {
+        state.isLoading = false;
+        state.error = action.payload as string;
+      });
+
+    // Host Cancel Booking
+    builder
+      .addCase(hostCancelBookingThunk.fulfilled, (state, action) => {
+        const index = state.hostBookings.findIndex((b) => b.id === action.payload.id);
+        if (index >= 0) {
+          state.hostBookings[index] = action.payload;
+        }
       });
   },
 });

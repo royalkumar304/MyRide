@@ -25,7 +25,13 @@ import ErrorState from '../../components/common/ErrorState';
 import EmptyState from '../../components/common/EmptyState';
 import { isNetworkError } from '../../services/errorHandler';
 import { useAppDispatch, useAppSelector } from '../../store';
-import { updateBookingStatus, cancelBookingWithRefund, fetchBookingById } from '../../store/slices/bookingSlice';
+import {
+  updateBookingStatus,
+  cancelBookingWithRefund,
+  fetchBookingById,
+  cancelBookingThunk,
+  fetchBookings,
+} from '../../store/slices/bookingSlice';
 import { bookingService } from '../../services/bookingService';
 import { calculateCancellationRefund } from '../../utils/cancellationPolicy';
 
@@ -85,21 +91,10 @@ export const BookingDetailsScreen: React.FC<Props> = ({ navigation, route }) => 
     setIsCancelling(true);
 
     try {
-      // Cancel on live backend server
-      const res = await bookingService.cancelBooking(
-        booking.id,
-        selectedReason,
-        'customer',
-        refundCalc.refundPercentage,
-        refundCalc.refundAmount
-      );
-
-      setIsCancelling(false);
-      setIsCancelModalVisible(false);
-
-      dispatch(
-        cancelBookingWithRefund({
-          id: booking.id,
+      // Cancel on live backend server and update Redux directly from actual API response
+      const actionResult = await dispatch(
+        cancelBookingThunk({
+          bookingId: booking.id,
           reason: selectedReason,
           cancelledBy: 'customer',
           refundPercentage: refundCalc.refundPercentage,
@@ -107,16 +102,27 @@ export const BookingDetailsScreen: React.FC<Props> = ({ navigation, route }) => 
         })
       );
 
-      const message =
-        refundCalc.refundPercentage === 100
-          ? `Booking cancelled successfully. A full 100% refund of ₹${refundCalc.refundAmount} has been processed back to your payment method.`
-          : `Booking cancelled. Per policy, 0% refund applies as this was cancelled within 24 hours of ride start.`;
+      setIsCancelling(false);
+      setIsCancelModalVisible(false);
 
-      Alert.alert(
-        refundCalc.refundPercentage === 100 ? '100% Refund Initiated 🎉' : 'Booking Cancelled (0% Refund)',
-        message,
-        [{ text: 'OK' }]
-      );
+      if (cancelBookingThunk.fulfilled.match(actionResult)) {
+        // Refetch latest server bookings cache
+        dispatch(fetchBookings(undefined));
+
+        const message =
+          refundCalc.refundPercentage === 100
+            ? `Booking cancelled successfully. A full 100% refund of ₹${refundCalc.refundAmount} has been processed back to your payment method.`
+            : `Booking cancelled. Per policy, 0% refund applies as this was cancelled within 24 hours of ride start.`;
+
+        Alert.alert(
+          refundCalc.refundPercentage === 100 ? '100% Refund Initiated 🎉' : 'Booking Cancelled (0% Refund)',
+          message,
+          [{ text: 'OK' }]
+        );
+      } else {
+        const errMsg = (actionResult.payload as string) || 'Failed to cancel booking on server.';
+        Alert.alert('Cancellation Failed', errMsg);
+      }
     } catch (err: any) {
       setIsCancelling(false);
       Alert.alert('Cancellation Error', err.message || 'Failed to cancel booking on server.');

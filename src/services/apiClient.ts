@@ -28,9 +28,40 @@ export interface RequestOptions extends Omit<RequestInit, 'body'> {
   timeoutMs?: number;
   skipAuth?: boolean;
   throwOnError?: boolean;
+  retryCount?: number;
+  retryDelayMs?: number;
+  idempotencyKey?: string;
 }
 
 export type UnauthorizedCallback = () => void;
+
+/**
+ * Determines whether an HTTP request is safe for automatic retry.
+ * Safe by default:
+ * - GET, HEAD, OPTIONS (idempotent read operations)
+ * - Requests with an explicit Idempotency-Key
+ *
+ * Strictly UNSAFE (never blindly retried):
+ * - Payment mutations (POST /payments/create-order, POST /payments/verify)
+ * - Booking creation (POST /bookings)
+ * - Booking cancellation (POST /bookings/:id/cancel)
+ * - Mutating verbs (POST, PUT, DELETE, PATCH) without idempotency key
+ */
+export function isRequestRetrySafe(method: string, endpoint: string, hasIdempotencyKey: boolean): boolean {
+  if (hasIdempotencyKey) return true;
+
+  const m = (method || 'GET').toUpperCase();
+  if (m === 'GET' || m === 'HEAD' || m === 'OPTIONS') {
+    return true;
+  }
+
+  // Explicit safety check: Never automatically retry payment mutations or booking creations/cancellations
+  if (endpoint.includes('/payments') || endpoint.includes('/bookings')) {
+    return false;
+  }
+
+  return false;
+}
 
 /**
  * Structured API Error class providing detailed diagnostic properties
@@ -250,128 +281,174 @@ class ApiClient {
       ? endpoint
       : `${this.baseUrl}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const method = (customOptions.method || 'GET').toUpperCase();
+    const effectiveIdempotencyKey =
+      options.idempotencyKey ||
+      (customHeaders as Record<string, string>)?.['Idempotency-Key'] ||
+      (customHeaders as Record<string, string>)?.['idempotency-key'];
 
-    try {
-      const headers: Record<string, string> = {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        ...(!skipAuth && this.authToken ? { Authorization: `Bearer ${this.authToken}` } : {}),
-        ...(customHeaders as Record<string, string>),
-      };
+    const isRetrySafe = isRequestRetrySafe(method, endpoint, !!effectiveIdempotencyKey);
 
-      const requestInit: RequestInit = {
-        ...customOptions,
-        headers,
-        signal: controller.signal,
-      };
+    // Safe GET requests retry up to 2 times by default.
+    // Unsafe mutations (payment, booking creation/cancellation) strictly have 0 retries unless idempotencyKey is present.
+    const maxRetries = options.retryCount !== undefined
+      ? (isRetrySafe ? options.retryCount : 0)
+      : (isRetrySafe && (method === 'GET' || method === 'HEAD') ? 2 : 0);
 
-      if (body !== undefined) {
-        requestInit.body = typeof body === 'string' ? body : JSON.stringify(body);
+    const baseDelay = options.retryDelayMs || 600;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      if (attempt > 0) {
+        const delay = baseDelay * Math.pow(2, attempt - 1);
+        await new Promise((resolve) => setTimeout(resolve, delay));
       }
 
-      const response = await fetch(url, requestInit);
-      clearTimeout(timeoutId);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-      // Safe body parsing
-      const parsedBody = await safelyParseResponseBody(response);
+      try {
+        const headers: Record<string, string> = {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          ...(!skipAuth && this.authToken ? { Authorization: `Bearer ${this.authToken}` } : {}),
+          ...(effectiveIdempotencyKey ? { 'Idempotency-Key': effectiveIdempotencyKey } : {}),
+          ...(customHeaders as Record<string, string>),
+        };
 
-      // 401 Handling
-      if (response.status === 401) {
-        this.notifyUnauthorized();
-        const errorMessage = extractErrorMessage(
-          parsedBody,
-          STATUS_ERROR_MESSAGES[401],
-          401
-        );
+        const requestInit: RequestInit = {
+          ...customOptions,
+          headers,
+          signal: controller.signal,
+        };
 
-        const errorObj = new ApiError({
-          message: errorMessage,
-          statusCode: 401,
-          errorCode: 'UNAUTHORIZED',
-          rawResponse: parsedBody,
-          isUnauthorized: true,
-        });
+        if (body !== undefined) {
+          requestInit.body = typeof body === 'string' ? body : JSON.stringify(body);
+        }
 
-        if (throwOnError) throw errorObj;
+        const response = await fetch(url, requestInit);
+        clearTimeout(timeoutId);
 
+        // Retry transient server errors (502, 503, 504) for safe requests
+        if (
+          isRetrySafe &&
+          attempt < maxRetries &&
+          (response.status === 502 || response.status === 503 || response.status === 504)
+        ) {
+          continue;
+        }
+
+        // Safe body parsing
+        const parsedBody = await safelyParseResponseBody(response);
+
+        // 401 Handling
+        if (response.status === 401) {
+          this.notifyUnauthorized();
+          const errorMessage = extractErrorMessage(
+            parsedBody,
+            STATUS_ERROR_MESSAGES[401],
+            401
+          );
+
+          const errorObj = new ApiError({
+            message: errorMessage,
+            statusCode: 401,
+            errorCode: 'UNAUTHORIZED',
+            rawResponse: parsedBody,
+            isUnauthorized: true,
+          });
+
+          if (throwOnError) throw errorObj;
+
+          return {
+            success: false,
+            statusCode: 401,
+            message: errorMessage,
+            error: 'UNAUTHORIZED',
+            raw: parsedBody,
+          };
+        }
+
+        // Non-2xx HTTP errors
+        if (!response.ok) {
+          const defaultMsg = STATUS_ERROR_MESSAGES[response.status] || `HTTP ${response.status}: ${response.statusText || 'Request failed'}`;
+          const errorMessage = extractErrorMessage(parsedBody, defaultMsg, response.status);
+
+          const errorObj = new ApiError({
+            message: errorMessage,
+            statusCode: response.status,
+            errorCode: typeof parsedBody?.error === 'string' ? parsedBody.error : `HTTP_${response.status}`,
+            rawResponse: parsedBody,
+          });
+
+          if (throwOnError) throw errorObj;
+
+          return {
+            success: false,
+            statusCode: response.status,
+            message: errorMessage,
+            error: errorObj.errorCode,
+            data: parsedBody as T,
+            raw: parsedBody,
+          };
+        }
+
+        // Success
+        const normalizedData = normalizePayload<T>(parsedBody);
         return {
-          success: false,
-          statusCode: 401,
-          message: errorMessage,
-          error: 'UNAUTHORIZED',
+          success: true,
+          statusCode: response.status,
+          data: normalizedData,
+          message: typeof parsedBody?.message === 'string' ? parsedBody.message : undefined,
           raw: parsedBody,
         };
-      }
+      } catch (err: any) {
+        clearTimeout(timeoutId);
 
-      // Non-2xx HTTP errors
-      if (!response.ok) {
-        const defaultMsg = STATUS_ERROR_MESSAGES[response.status] || `HTTP ${response.status}: ${response.statusText || 'Request failed'}`;
-        const errorMessage = extractErrorMessage(parsedBody, defaultMsg, response.status);
+        if (err instanceof ApiError) {
+          if (throwOnError) throw err;
+          return {
+            success: false,
+            statusCode: err.statusCode,
+            message: err.message,
+            error: err.errorCode,
+            raw: err.rawResponse,
+          };
+        }
+
+        // If safe request and attempts remain, retry network/timeout glitch
+        if (isRetrySafe && attempt < maxRetries) {
+          continue;
+        }
+
+        const isTimeout = err.name === 'AbortError';
+        const errorMessage = NETWORK_ERROR_MESSAGE;
 
         const errorObj = new ApiError({
           message: errorMessage,
-          statusCode: response.status,
-          errorCode: typeof parsedBody?.error === 'string' ? parsedBody.error : `HTTP_${response.status}`,
-          rawResponse: parsedBody,
+          statusCode: isTimeout ? 408 : 0,
+          errorCode: isTimeout ? 'TIMEOUT' : 'NETWORK_ERROR',
+          isTimeout,
+          isNetworkError: true,
         });
 
         if (throwOnError) throw errorObj;
 
         return {
           success: false,
-          statusCode: response.status,
+          statusCode: errorObj.statusCode,
           message: errorMessage,
           error: errorObj.errorCode,
-          data: parsedBody as T,
-          raw: parsedBody,
         };
       }
-
-      // Success
-      const normalizedData = normalizePayload<T>(parsedBody);
-      return {
-        success: true,
-        statusCode: response.status,
-        data: normalizedData,
-        message: typeof parsedBody?.message === 'string' ? parsedBody.message : undefined,
-        raw: parsedBody,
-      };
-    } catch (err: any) {
-      clearTimeout(timeoutId);
-
-      if (err instanceof ApiError) {
-        if (throwOnError) throw err;
-        return {
-          success: false,
-          statusCode: err.statusCode,
-          message: err.message,
-          error: err.errorCode,
-          raw: err.rawResponse,
-        };
-      }
-
-      const isTimeout = err.name === 'AbortError';
-      const errorMessage = NETWORK_ERROR_MESSAGE;
-
-      const errorObj = new ApiError({
-        message: errorMessage,
-        statusCode: isTimeout ? 408 : 0,
-        errorCode: isTimeout ? 'TIMEOUT' : 'NETWORK_ERROR',
-        isTimeout,
-        isNetworkError: true,
-      });
-
-      if (throwOnError) throw errorObj;
-
-      return {
-        success: false,
-        statusCode: errorObj.statusCode,
-        message: errorMessage,
-        error: errorObj.errorCode,
-      };
     }
+
+    // Fallback if loop finishes unexpectedly
+    return {
+      success: false,
+      statusCode: 0,
+      message: NETWORK_ERROR_MESSAGE,
+      error: 'NETWORK_ERROR',
+    };
   }
 
   /**
