@@ -40,54 +40,46 @@ const initialState: AuthState = {
  */
 export const initializeAuth = createAsyncThunk(
   'auth/initializeAuth',
-  async (_, { dispatch }) => {
+  async () => {
     try {
+      // 1. Check stored token in secure storage
       const token = await tokenStorage.getToken();
       if (!token) {
+        // No token → Unauthenticated
+        apiClient.setAuthToken(null);
         return null;
       }
 
-      // Inject token into API client for outgoing requests
+      // 2. Token exists → Prepare API client with token
       apiClient.setAuthToken(token);
 
-      const cachedUser = await tokenStorage.getStoredUser();
+      // 3. Verify token with backend: GET /auth/me
+      // Do NOT assume authentication is valid simply because a token exists
+      const profileRes = await authService.getCurrentUser();
 
-      try {
-        const profileRes = await authService.getProfile();
-        if (profileRes.success && profileRes.data) {
-          await tokenStorage.saveSession(token, profileRes.data);
-          return { user: profileRes.data, token };
-        }
-      } catch (err: any) {
-        // If 401 Unauthorized or token invalid, flush session
-        if (err?.statusCode === 401 || err?.isUnauthorized) {
-          console.log('[initializeAuth] Stored session is invalid or expired. Flushing session.');
-          await tokenStorage.clearSession();
-          apiClient.setAuthToken(null);
-          return null;
-        }
-
-        // If network/offline error and we have cached user, maintain offline session
-        if (cachedUser) {
-          console.log('[initializeAuth] Backend unreachable, using cached session for offline access.');
-          return { user: cachedUser, token };
-        }
+      if (profileRes.success && profileRes.data) {
+        // 4. Valid session verified by backend → update stored profile and Redux
+        await tokenStorage.saveSession(token, profileRes.data);
+        return { user: profileRes.data, token };
       }
 
-      if (cachedUser) {
-        return { user: cachedUser, token };
-      }
-
-      // No profile could be established
+      // 5. Invalid/expired token → Clear token from storage & ApiClient
+      console.log('[initializeAuth] Token verification failed or expired. Clearing token.');
+      await tokenStorage.clearToken();
       await tokenStorage.clearSession();
       apiClient.setAuthToken(null);
       return null;
     } catch (e) {
-      console.warn('[initializeAuth] Error restoring session:', e);
+      // Any network or 401 error during verification → Clear token
+      console.warn('[initializeAuth] Error verifying stored token with backend:', e);
+      await tokenStorage.clearToken();
+      await tokenStorage.clearSession();
+      apiClient.setAuthToken(null);
       return null;
     }
   }
 );
+
 
 export const authSlice = createSlice({
   name: 'auth',

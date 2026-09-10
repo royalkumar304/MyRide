@@ -68,8 +68,10 @@ export const SplashScreen: React.FC<Props> = ({ navigation }) => {
         navigation.replace('CustomerMain');
       }
     } else {
-      navigation.replace('Onboarding');
+      // Flow: No token or Invalid/expired → Clear token → Login
+      navigation.replace('Login');
     }
+
   };
 
   useEffect(() => {
