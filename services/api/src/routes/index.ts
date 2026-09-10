@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { authenticateToken, requireRole } from '../middleware/auth';
+import { getDatabaseStatus } from '../config/db';
+import { ENV } from '../config/env';
 import * as authController from '../controllers/authController';
 import * as vehicleController from '../controllers/vehicleController';
 import * as bookingController from '../controllers/bookingController';
@@ -9,13 +11,24 @@ import * as adminController from '../controllers/adminController';
 
 const router = Router();
 
-// Health Check
+// Health Check with Database Status
 router.get('/health', (req, res) => {
-  res.json({
-    status: 'online',
+  const dbStatus = getDatabaseStatus();
+  const statusCode = dbStatus.isHealthy ? 200 : 503;
+
+  res.status(statusCode).json({
+    status: dbStatus.isHealthy ? 'healthy' : 'unhealthy',
     platform: 'MyRide Backend API',
     tagline: 'Apni Ride. Apna Choice.',
     timestamp: new Date().toISOString(),
+    environment: ENV.NODE_ENV,
+    database: {
+      status: dbStatus.status,
+      mode: dbStatus.mode,
+      healthy: dbStatus.isHealthy,
+      readyState: dbStatus.readyState,
+      error: dbStatus.error || undefined,
+    },
     commissionRule: '15% platform commission stored dynamically in database',
   });
 });

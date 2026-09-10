@@ -18,5 +18,7 @@ export const ENV = {
   GOOGLE_MAPS_API_KEY: process.env.GOOGLE_MAPS_API_KEY || 'AIzaSy_MOCK_MAPS_KEY',
   CORS_ORIGIN: process.env.CORS_ORIGIN || '*',
   EXPOSE_DEV_OTP: process.env.NODE_ENV !== 'production' && (process.env.EXPOSE_DEV_OTP === 'true' || process.env.EXPOSE_DEV_OTP === '1'),
+  USE_MEMORY_STORE: process.env.USE_MEMORY_STORE === 'true' || process.env.USE_MEMORY_STORE === '1',
 };
+
 
