@@ -7,15 +7,140 @@ export interface ApiResponse<T = any> {
   message?: string;
   error?: string;
   statusCode?: number;
+  raw?: any;
 }
 
 export interface RequestOptions extends Omit<RequestInit, 'body'> {
   body?: any;
   timeoutMs?: number;
   skipAuth?: boolean;
+  throwOnError?: boolean;
 }
 
 export type UnauthorizedCallback = () => void;
+
+/**
+ * Structured API Error class providing detailed diagnostic properties
+ */
+export class ApiError extends Error {
+  public statusCode: number;
+  public errorCode?: string;
+  public rawResponse?: any;
+  public isNetworkError: boolean;
+  public isTimeout: boolean;
+  public isUnauthorized: boolean;
+
+  constructor(params: {
+    message: string;
+    statusCode?: number;
+    errorCode?: string;
+    rawResponse?: any;
+    isNetworkError?: boolean;
+    isTimeout?: boolean;
+    isUnauthorized?: boolean;
+  }) {
+    super(params.message);
+    this.name = 'ApiError';
+    this.statusCode = params.statusCode ?? 500;
+    this.errorCode = params.errorCode;
+    this.rawResponse = params.rawResponse;
+    this.isNetworkError = !!params.isNetworkError;
+    this.isTimeout = !!params.isTimeout;
+    this.isUnauthorized = !!params.isUnauthorized;
+    Object.setPrototypeOf(this, ApiError.prototype);
+  }
+}
+
+/**
+ * Extracts human-readable error messages from various backend error shapes
+ * Supports Zod validation issues, Mongoose errors, and string errors
+ */
+function extractErrorMessage(parsedBody: any, defaultMessage: string): string {
+  if (!parsedBody) return defaultMessage;
+  if (typeof parsedBody === 'string') {
+    // Strip HTML tags if HTML error page was returned
+    const clean = parsedBody.replace(/<[^>]*>?/gm, '').trim();
+    return clean.length > 0 ? (clean.length > 150 ? clean.substring(0, 150) + '...' : clean) : defaultMessage;
+  }
+  if (parsedBody.message && typeof parsedBody.message === 'string') {
+    return parsedBody.message;
+  }
+  if (parsedBody.error && typeof parsedBody.error === 'string') {
+    return parsedBody.error;
+  }
+  if (Array.isArray(parsedBody.errors) && parsedBody.errors.length > 0) {
+    return parsedBody.errors
+      .map((e: any) => (e.path ? `${Array.isArray(e.path) ? e.path.join('.') : e.path}: ${e.message}` : e.message || String(e)))
+      .join(', ');
+  }
+  return defaultMessage;
+}
+
+/**
+ * Safely parses response body without crashing on non-JSON, HTML, or malformed JSON
+ */
+async function safelyParseResponseBody(response: Response): Promise<any> {
+  const contentType = response.headers.get('content-type') || '';
+  try {
+    if (contentType.includes('application/json')) {
+      const text = await response.text();
+      if (!text || text.trim() === '') return null;
+      return JSON.parse(text);
+    } else {
+      const text = await response.text();
+      if (!text || text.trim() === '') return null;
+      try {
+        return JSON.parse(text);
+      } catch {
+        return text;
+      }
+    }
+  } catch (err) {
+    return { parseError: true, raw: 'Failed to parse response payload' };
+  }
+}
+
+/**
+ * Automatically normalizes common backend response wrappers
+ * e.g. { success: true, vehicles: [...] } or { success: true, vehicle: {...} }
+ */
+function normalizePayload<T>(parsedBody: any): T {
+  if (!parsedBody || typeof parsedBody !== 'object') {
+    return parsedBody as T;
+  }
+
+  // Preserve the full parsed object by default so services accessing specific properties work seamlessly
+  const target: any = { ...parsedBody };
+
+  // If there's an explicit data field, prioritize it
+  if (parsedBody.data !== undefined) {
+    target.data = parsedBody.data;
+  }
+
+  // Convenience extraction for common entity keys
+  const primaryKeys = [
+    'vehicles',
+    'vehicle',
+    'bookings',
+    'booking',
+    'user',
+    'stats',
+    'earnings',
+    'order',
+    'cities',
+    'reviews',
+    'review',
+    'breakdown',
+  ];
+
+  for (const key of primaryKeys) {
+    if (parsedBody[key] !== undefined && target[key] === undefined) {
+      target[key] = parsedBody[key];
+    }
+  }
+
+  return target as T;
+}
 
 class ApiClient {
   private baseUrl: string;
@@ -28,9 +153,7 @@ class ApiClient {
   }
 
   /**
-   * Platform-aware dynamic base URL resolution:
-   * - Android Emulator needs 10.0.2.2 to reach host machine localhost
-   * - iOS Simulator and Web use localhost directly
+   * Platform-aware dynamic base URL resolution
    */
   private resolveDefaultBaseUrl(): string {
     // 1. Prioritize Expo Public API URL environment variable
@@ -89,7 +212,12 @@ class ApiClient {
   }
 
   /**
-   * Core request method handling JSON, headers, timeout, response parsing, and error normalization
+   * Core request method:
+   * - Never crashes on malformed JSON
+   * - Preserves backend error messages
+   * - Automatically injects token
+   * - Handles timeouts and 401s
+   * - Returns normalized typed data
    */
   public async request<T = any>(
     endpoint: string,
@@ -100,6 +228,7 @@ class ApiClient {
       headers: customHeaders = {},
       timeoutMs = this.defaultTimeoutMs,
       skipAuth = false,
+      throwOnError = false,
       ...customOptions
     } = options;
 
@@ -131,76 +260,116 @@ class ApiClient {
       const response = await fetch(url, requestInit);
       clearTimeout(timeoutId);
 
-      // Parse JSON response safely
-      let parsedBody: any = null;
-      const contentType = response.headers.get('content-type');
-      if (contentType && contentType.includes('application/json')) {
-        parsedBody = await response.json().catch(() => null);
-      } else {
-        const text = await response.text().catch(() => '');
-        try {
-          parsedBody = JSON.parse(text);
-        } catch {
-          parsedBody = text ? { raw: text } : null;
-        }
-      }
+      // Safe body parsing
+      const parsedBody = await safelyParseResponseBody(response);
 
-      // Handle 401 Unauthorized
+      // 401 Handling
       if (response.status === 401) {
         this.notifyUnauthorized();
+        const errorMessage = extractErrorMessage(
+          parsedBody,
+          'Session expired or unauthorized. Please log in again.'
+        );
+
+        const errorObj = new ApiError({
+          message: errorMessage,
+          statusCode: 401,
+          errorCode: 'UNAUTHORIZED',
+          rawResponse: parsedBody,
+          isUnauthorized: true,
+        });
+
+        if (throwOnError) throw errorObj;
+
         return {
           success: false,
           statusCode: 401,
-          message: parsedBody?.message || 'Session expired or unauthorized. Please log in again.',
+          message: errorMessage,
           error: 'UNAUTHORIZED',
+          raw: parsedBody,
         };
       }
 
-      // Handle other non-2xx HTTP errors
+      // Non-2xx HTTP errors
       if (!response.ok) {
-        const errorMessage =
-          parsedBody?.message ||
-          parsedBody?.error ||
-          `HTTP ${response.status}: ${response.statusText || 'Request failed'}`;
+        const defaultMsg = `HTTP ${response.status}: ${response.statusText || 'Request failed'}`;
+        const errorMessage = extractErrorMessage(parsedBody, defaultMsg);
+
+        const errorObj = new ApiError({
+          message: errorMessage,
+          statusCode: response.status,
+          errorCode: typeof parsedBody?.error === 'string' ? parsedBody.error : `HTTP_${response.status}`,
+          rawResponse: parsedBody,
+        });
+
+        if (throwOnError) throw errorObj;
 
         return {
           success: false,
           statusCode: response.status,
           message: errorMessage,
-          error: parsedBody?.error || errorMessage,
-          data: parsedBody,
+          error: errorObj.errorCode,
+          data: parsedBody as T,
+          raw: parsedBody,
         };
       }
 
-      // Successful response
-      const responseData = parsedBody?.data !== undefined ? parsedBody.data : parsedBody;
+      // Success
+      const normalizedData = normalizePayload<T>(parsedBody);
       return {
         success: true,
         statusCode: response.status,
-        data: responseData as T,
-        message: parsedBody?.message,
+        data: normalizedData,
+        message: typeof parsedBody?.message === 'string' ? parsedBody.message : undefined,
+        raw: parsedBody,
       };
     } catch (err: any) {
       clearTimeout(timeoutId);
 
-      if (err.name === 'AbortError') {
-        const timeoutMessage = `Request timed out after ${timeoutMs}ms. Please check your network connection or server status.`;
+      if (err instanceof ApiError) {
+        if (throwOnError) throw err;
         return {
           success: false,
-          statusCode: 408,
-          message: timeoutMessage,
-          error: 'TIMEOUT',
+          statusCode: err.statusCode,
+          message: err.message,
+          error: err.errorCode,
+          raw: err.rawResponse,
         };
       }
 
-      const networkMessage = err.message || 'Network request failed. Please check your connection.';
+      const isTimeout = err.name === 'AbortError';
+      const errorMessage = isTimeout
+        ? `Request timed out after ${timeoutMs}ms. Please check server reachability.`
+        : err.message || 'Network error. Please verify your connection.';
+
+      const errorObj = new ApiError({
+        message: errorMessage,
+        statusCode: isTimeout ? 408 : 0,
+        errorCode: isTimeout ? 'TIMEOUT' : 'NETWORK_ERROR',
+        isTimeout,
+        isNetworkError: !isTimeout,
+      });
+
+      if (throwOnError) throw errorObj;
+
       return {
         success: false,
-        statusCode: 0,
-        message: networkMessage,
-        error: 'NETWORK_ERROR',
+        statusCode: errorObj.statusCode,
+        message: errorMessage,
+        error: errorObj.errorCode,
       };
     }
+  }
+
+  /**
+   * Executes request and returns typed data directly, throwing ApiError if unsuccessful
+   */
+  public async fetchOrThrow<T = any>(
+    endpoint: string,
+    options: RequestOptions = {}
+  ): Promise<T> {
+    const res = await this.request<T>(endpoint, { ...options, throwOnError: true });
+    return res.data as T;
   }
 
   // Convenience HTTP Methods
@@ -229,7 +398,7 @@ class ApiClient {
 export const apiClient = new ApiClient();
 export default apiClient;
 
-// Convenience function exports matching standard API patterns
+// Convenience function exports
 export const setAuthToken = (token: string | null) => apiClient.setAuthToken(token);
 export const getAuthToken = () => apiClient.getAuthToken();
 export const setApiBaseUrl = (url: string) => apiClient.setBaseUrl(url);
@@ -240,3 +409,4 @@ export const apiPost = <T = any>(endpoint: string, body?: any, options?: Omit<Re
 export const apiPut = <T = any>(endpoint: string, body?: any, options?: Omit<RequestOptions, 'method' | 'body'>) => apiClient.put<T>(endpoint, body, options);
 export const apiPatch = <T = any>(endpoint: string, body?: any, options?: Omit<RequestOptions, 'method' | 'body'>) => apiClient.patch<T>(endpoint, body, options);
 export const apiDelete = <T = any>(endpoint: string, options?: Omit<RequestOptions, 'method' | 'body'>) => apiClient.delete<T>(endpoint, options);
+export const fetchOrThrow = <T = any>(endpoint: string, options?: RequestOptions) => apiClient.fetchOrThrow<T>(endpoint, options);
