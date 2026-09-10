@@ -36,7 +36,7 @@ export const APP_CONFIG = {
   referredUserDiscount: 150,
 
   // Architecture environment configuration keys
-  apiBaseUrl: process.env.API_BASE_URL || 'https://api.myride.in/v1',
+  apiBaseUrl: process.env.EXPO_PUBLIC_API_URL || process.env.API_BASE_URL || 'http://localhost:5000/api/v1',
   googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY || 'AIzaSy_MOCK_GOOGLE_MAPS_KEY_MYRIDE',
   razorpayKeyId: process.env.RAZORPAY_KEY_ID || 'rzp_test_MyRideProd2026',
   firebaseConfig: {

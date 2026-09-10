@@ -33,12 +33,18 @@ class ApiClient {
    * - iOS Simulator and Web use localhost directly
    */
   private resolveDefaultBaseUrl(): string {
+    // 1. Prioritize Expo Public API URL environment variable
+    if (process.env.EXPO_PUBLIC_API_URL) {
+      return process.env.EXPO_PUBLIC_API_URL;
+    }
     if (process.env.EXPO_PUBLIC_API_BASE_URL) {
       return process.env.EXPO_PUBLIC_API_BASE_URL;
     }
+    // 2. Configurable fallback from APP_CONFIG
     if (APP_CONFIG.apiBaseUrl && !APP_CONFIG.apiBaseUrl.includes('api.myride.in')) {
       return APP_CONFIG.apiBaseUrl;
     }
+    // 3. Platform-aware fallbacks for local development
     if (Platform.OS === 'android') {
       return 'http://10.0.2.2:5000/api/v1';
     }
