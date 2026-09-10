@@ -20,6 +20,10 @@ import { borderRadius, shadows, typography } from '../../constants/theme';
 import Badge from '../../components/common/Badge';
 import Button from '../../components/common/Button';
 import Header from '../../components/common/Header';
+import Loader from '../../components/common/Loader';
+import ErrorState from '../../components/common/ErrorState';
+import EmptyState from '../../components/common/EmptyState';
+import { isNetworkError } from '../../services/errorHandler';
 import { useAppDispatch, useAppSelector } from '../../store';
 import { updateBookingStatus, cancelBookingWithRefund, fetchBookingById } from '../../store/slices/bookingSlice';
 import { bookingService } from '../../services/bookingService';
@@ -38,7 +42,7 @@ const CANCELLATION_REASONS = [
 export const BookingDetailsScreen: React.FC<Props> = ({ navigation, route }) => {
   const { bookingId } = route.params;
   const dispatch = useAppDispatch();
-  const { bookings, activeBooking, isLoading } = useAppSelector((state) => state.bookings);
+  const { bookings, activeBooking, isLoading, error } = useAppSelector((state) => state.bookings);
 
   useEffect(() => {
     if (bookingId) {
@@ -46,7 +50,7 @@ export const BookingDetailsScreen: React.FC<Props> = ({ navigation, route }) => 
     }
   }, [bookingId, dispatch]);
 
-  const booking = bookings.find((b) => b.id === bookingId) || (activeBooking?.id === bookingId ? activeBooking : bookings[0]);
+  const booking = bookings.find((b) => b.id === bookingId) || (activeBooking?.id === bookingId ? activeBooking : undefined);
 
   // Cancellation Modal state
   const [isCancelModalVisible, setIsCancelModalVisible] = useState(false);
@@ -119,25 +123,47 @@ export const BookingDetailsScreen: React.FC<Props> = ({ navigation, route }) => 
     }
   };
 
+  // 1. Loading State
   if (!booking && isLoading) {
     return (
-      <SafeAreaView style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
-        <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={{ marginTop: 12, ...typography.body, color: colors.darkMuted }}>
-          Loading booking details from server...
-        </Text>
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor={colors.surface} />
+        <Header title="Booking Details" onBack={() => navigation.goBack()} />
+        <Loader message="Loading booking details from server..." />
       </SafeAreaView>
     );
   }
 
+  // 2. Error State
+  if (!booking && error) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor={colors.surface} />
+        <Header title="Booking Details" onBack={() => navigation.goBack()} />
+        <ErrorState
+          isOffline={isNetworkError(error)}
+          message={error}
+          retryAction={() => dispatch(fetchBookingById(bookingId))}
+          style={{ flex: 1 }}
+        />
+      </SafeAreaView>
+    );
+  }
+
+  // 3. Empty State (Not found)
   if (!booking) {
     return (
-      <SafeAreaView style={[styles.container, { justifyContent: 'center', alignItems: 'center', padding: 24 }]}>
-        <Text style={{ ...typography.h3, color: colors.dark, marginBottom: 8 }}>Booking Not Found</Text>
-        <Text style={{ ...typography.body, color: colors.darkMuted, textAlign: 'center', marginBottom: 20 }}>
-          The requested booking could not be retrieved from the server.
-        </Text>
-        <Button title="Go Back" onPress={() => navigation.goBack()} />
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor={colors.surface} />
+        <Header title="Booking Details" onBack={() => navigation.goBack()} />
+        <EmptyState
+          icon="receipt-outline"
+          title="Booking Not Found"
+          subtitle="The requested booking could not be retrieved from the server."
+          actionTitle="Back to Bookings"
+          onAction={() => navigation.goBack()}
+          style={{ flex: 1 }}
+        />
       </SafeAreaView>
     );
   }

@@ -19,6 +19,8 @@ import CityPickerModal from '../../components/modals/CityPickerModal';
 import HubLocationPickerModal from '../../components/modals/HubLocationPickerModal';
 import DateTimePickerModal from '../../components/modals/DateTimePickerModal';
 import Button from '../../components/common/Button';
+import EmptyState from '../../components/common/EmptyState';
+import { VehicleCardSkeleton } from '../../components/common/Loader';
 import { useAppDispatch, useAppSelector } from '../../store';
 import { setSelectedCity } from '../../store/slices/uiSlice';
 import {
@@ -39,7 +41,7 @@ export const HomeScreen: React.FC = () => {
   const dispatch = useAppDispatch();
 
   const { selectedCity, language } = useAppSelector((state) => state.ui);
-  const { vehicles, savedVehicleIds, selectedCategory } = useAppSelector((state) => state.vehicles);
+  const { vehicles, savedVehicleIds, selectedCategory, isLoading } = useAppSelector((state) => state.vehicles);
   const { user } = useAppSelector((state) => state.auth);
   const { bookings } = useAppSelector((state) => state.bookings);
 
@@ -289,16 +291,31 @@ export const HomeScreen: React.FC = () => {
           </TouchableOpacity>
         </View>
 
-        {/* Vehicle Cards List */}
-        {filteredVehicles.map((vehicle) => (
-          <VehicleCard
-            key={vehicle.id}
-            vehicle={vehicle}
-            isSaved={savedVehicleIds.includes(vehicle.id)}
-            onToggleSave={() => dispatch(toggleSaveVehicle(vehicle.id))}
-            onPress={() => handleVehiclePress(vehicle)}
+        {/* Vehicle Cards List / Skeletons / Empty */}
+        {isLoading && filteredVehicles.length === 0 ? (
+          <>
+            <VehicleCardSkeleton />
+            <VehicleCardSkeleton />
+          </>
+        ) : filteredVehicles.length === 0 ? (
+          <EmptyState
+            icon="car-outline"
+            title="No vehicles in this category"
+            subtitle={`There are currently no ${selectedCategory !== 'all' ? selectedCategory : ''} vehicles available in ${selectedCity.name}.`}
+            actionTitle="View All Vehicles"
+            onAction={() => dispatch(setSelectedCategory('all'))}
           />
-        ))}
+        ) : (
+          filteredVehicles.map((vehicle) => (
+            <VehicleCard
+              key={vehicle.id}
+              vehicle={vehicle}
+              isSaved={savedVehicleIds.includes(vehicle.id)}
+              onToggleSave={() => dispatch(toggleSaveVehicle(vehicle.id))}
+              onPress={() => handleVehiclePress(vehicle)}
+            />
+          ))
+        )}
       </ScrollView>
 
       {/* City Picker Modal */}

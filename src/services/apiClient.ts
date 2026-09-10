@@ -1,5 +1,18 @@
 import { Platform } from 'react-native';
 import { APP_CONFIG } from '../constants/config';
+import {
+  getFriendlyErrorMessage,
+  isNetworkError as checkIsNetworkError,
+  STATUS_ERROR_MESSAGES,
+  NETWORK_ERROR_MESSAGE,
+} from './errorHandler';
+
+export {
+  getFriendlyErrorMessage,
+  checkIsNetworkError as isNetworkError,
+  STATUS_ERROR_MESSAGES,
+  NETWORK_ERROR_MESSAGE,
+};
 
 export interface ApiResponse<T = any> {
   success: boolean;
@@ -39,7 +52,9 @@ export class ApiError extends Error {
     isTimeout?: boolean;
     isUnauthorized?: boolean;
   }) {
-    super(params.message);
+    // Ensure all ApiErrors use friendly messages without raw stack traces
+    const friendlyMsg = getFriendlyErrorMessage(params.message, params.statusCode);
+    super(friendlyMsg);
     this.name = 'ApiError';
     this.statusCode = params.statusCode ?? 500;
     this.errorCode = params.errorCode;
@@ -54,26 +69,25 @@ export class ApiError extends Error {
 /**
  * Extracts human-readable error messages from various backend error shapes
  * Supports Zod validation issues, Mongoose errors, and string errors
+ * Sanitizes stack traces and maps standard status codes
  */
-function extractErrorMessage(parsedBody: any, defaultMessage: string): string {
-  if (!parsedBody) return defaultMessage;
+function extractErrorMessage(parsedBody: any, defaultMessage: string, statusCode?: number): string {
+  if (!parsedBody) return getFriendlyErrorMessage(defaultMessage, statusCode);
+  
+  let candidate = defaultMessage;
   if (typeof parsedBody === 'string') {
-    // Strip HTML tags if HTML error page was returned
-    const clean = parsedBody.replace(/<[^>]*>?/gm, '').trim();
-    return clean.length > 0 ? (clean.length > 150 ? clean.substring(0, 150) + '...' : clean) : defaultMessage;
-  }
-  if (parsedBody.message && typeof parsedBody.message === 'string') {
-    return parsedBody.message;
-  }
-  if (parsedBody.error && typeof parsedBody.error === 'string') {
-    return parsedBody.error;
-  }
-  if (Array.isArray(parsedBody.errors) && parsedBody.errors.length > 0) {
-    return parsedBody.errors
+    candidate = parsedBody;
+  } else if (parsedBody.message && typeof parsedBody.message === 'string') {
+    candidate = parsedBody.message;
+  } else if (parsedBody.error && typeof parsedBody.error === 'string') {
+    candidate = parsedBody.error;
+  } else if (Array.isArray(parsedBody.errors) && parsedBody.errors.length > 0) {
+    candidate = parsedBody.errors
       .map((e: any) => (e.path ? `${Array.isArray(e.path) ? e.path.join('.') : e.path}: ${e.message}` : e.message || String(e)))
       .join(', ');
   }
-  return defaultMessage;
+
+  return getFriendlyErrorMessage(candidate, statusCode);
 }
 
 /**
@@ -268,7 +282,8 @@ class ApiClient {
         this.notifyUnauthorized();
         const errorMessage = extractErrorMessage(
           parsedBody,
-          'Session expired or unauthorized. Please log in again.'
+          STATUS_ERROR_MESSAGES[401],
+          401
         );
 
         const errorObj = new ApiError({
@@ -292,8 +307,8 @@ class ApiClient {
 
       // Non-2xx HTTP errors
       if (!response.ok) {
-        const defaultMsg = `HTTP ${response.status}: ${response.statusText || 'Request failed'}`;
-        const errorMessage = extractErrorMessage(parsedBody, defaultMsg);
+        const defaultMsg = STATUS_ERROR_MESSAGES[response.status] || `HTTP ${response.status}: ${response.statusText || 'Request failed'}`;
+        const errorMessage = extractErrorMessage(parsedBody, defaultMsg, response.status);
 
         const errorObj = new ApiError({
           message: errorMessage,
@@ -338,16 +353,14 @@ class ApiClient {
       }
 
       const isTimeout = err.name === 'AbortError';
-      const errorMessage = isTimeout
-        ? `Request timed out after ${timeoutMs}ms. Please check server reachability.`
-        : err.message || 'Network error. Please verify your connection.';
+      const errorMessage = NETWORK_ERROR_MESSAGE;
 
       const errorObj = new ApiError({
         message: errorMessage,
         statusCode: isTimeout ? 408 : 0,
         errorCode: isTimeout ? 'TIMEOUT' : 'NETWORK_ERROR',
         isTimeout,
-        isNetworkError: !isTimeout,
+        isNetworkError: true,
       });
 
       if (throwOnError) throw errorObj;

@@ -18,6 +18,10 @@ import colors from '../../constants/colors';
 import { borderRadius, shadows, typography } from '../../constants/theme';
 import Badge from '../../components/common/Badge';
 import Button from '../../components/common/Button';
+import Loader from '../../components/common/Loader';
+import ErrorState from '../../components/common/ErrorState';
+import EmptyState from '../../components/common/EmptyState';
+import { isNetworkError } from '../../services/errorHandler';
 import { useAppDispatch, useAppSelector } from '../../store';
 import { fetchHostDashboard, fetchHostVehicles } from '../../store/slices/hostSlice';
 
@@ -26,7 +30,7 @@ type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 export const HostDashboardScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
   const dispatch = useAppDispatch();
-  const { summary, hostVehicles, isLoading } = useAppSelector((state) => state.host);
+  const { summary, hostVehicles, isLoading, error } = useAppSelector((state) => state.host);
   const { user } = useAppSelector((state) => state.auth);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -48,6 +52,31 @@ export const HostDashboardScreen: React.FC = () => {
   };
 
   const firstName = user?.fullName?.split(' ')[0] || 'Rahul';
+
+  // 1. Loading State (Initial Fetch)
+  if (isLoading && hostVehicles.length === 0 && !refreshing) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor={colors.surface} />
+        <Loader message="Loading host dashboard..." />
+      </SafeAreaView>
+    );
+  }
+
+  // 2. Error State (Initial Fetch Failed)
+  if (error && hostVehicles.length === 0 && !refreshing) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor={colors.surface} />
+        <ErrorState
+          isOffline={isNetworkError(error)}
+          message={error}
+          retryAction={loadData}
+          style={{ flex: 1 }}
+        />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -141,20 +170,14 @@ export const HostDashboardScreen: React.FC = () => {
 
         {/* Host Vehicle Cards */}
         {hostVehicles.length === 0 ? (
-          <View style={styles.emptyVehiclesCard}>
-            <Ionicons name="car-sport-outline" size={40} color={colors.muted} style={{ marginBottom: 8 }} />
-            <Text style={styles.emptyVehiclesTitle}>No Vehicles Listed Yet</Text>
-            <Text style={styles.emptyVehiclesSub}>
-              Earn up to ₹25,000/month by listing your car, bike, or scooter with verified KYC renters.
-            </Text>
-            <Button
-              title="List Your First Vehicle"
-              onPress={() => navigation.navigate('AddVehicleWizard')}
-              variant="primary"
-              size="sm"
-              style={{ marginTop: 12 }}
-            />
-          </View>
+          <EmptyState
+            icon="car-sport-outline"
+            title="No Vehicles Listed Yet"
+            subtitle="Earn up to ₹25,000/month by listing your car, bike, or scooter with verified KYC renters."
+            actionTitle="List Your First Vehicle"
+            onAction={() => navigation.navigate('AddVehicleWizard')}
+            style={{ backgroundColor: colors.surface, borderRadius: borderRadius.xl, padding: 24, marginVertical: 8 }}
+          />
         ) : (
           hostVehicles.map((veh) => (
             <View key={veh.id} style={styles.vehicleCard}>

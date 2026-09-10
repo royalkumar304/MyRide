@@ -20,6 +20,9 @@ import Button from '../../components/common/Button';
 import VehicleCard from '../../components/vehicle/VehicleCard';
 import FilterModal from '../../components/vehicle/FilterModal';
 import EmptyState from '../../components/common/EmptyState';
+import ErrorState from '../../components/common/ErrorState';
+import Loader from '../../components/common/Loader';
+import { getFriendlyErrorMessage, isNetworkError } from '../../services/errorHandler';
 import { useAppDispatch, useAppSelector } from '../../store';
 import {
   setSearchQuery,
@@ -88,11 +91,11 @@ export const ExploreScreen: React.FC = () => {
       if (res.success && res.data) {
         dispatch(setVehicles(res.data));
       } else {
-        setError(res.message || 'Failed to fetch vehicles from server');
+        setError(getFriendlyErrorMessage(res.message || 'Failed to fetch vehicles from server', res.statusCode));
       }
     } catch (err: any) {
       console.warn('[ExploreScreen] Error fetching vehicles:', err);
-      setError(err?.message || 'Network error while fetching vehicles. Please retry.');
+      setError(getFriendlyErrorMessage(err));
     } finally {
       dispatch(setVehiclesLoading(false));
     }
@@ -185,8 +188,8 @@ export const ExploreScreen: React.FC = () => {
         </View>
       </View>
 
-      {/* Error State Banner */}
-      {error && (
+      {/* Error State Banner when vehicles exist */}
+      {error && vehicles.length > 0 && (
         <View style={styles.errorContainer}>
           <View style={styles.errorRow}>
             <Ionicons name="alert-circle-outline" size={22} color={colors.danger} />
@@ -201,16 +204,19 @@ export const ExploreScreen: React.FC = () => {
         </View>
       )}
 
-      {/* Loading State (Initial Fetch) */}
+      {/* 1. Loading State (Initial Fetch) */}
       {isLoading && vehicles.length === 0 ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={styles.loadingText}>
-            Searching available rides in {selectedCity.name}...
-          </Text>
-        </View>
+        <Loader message={`Searching available rides in ${selectedCity.name}...`} />
+      ) : error && vehicles.length === 0 ? (
+        /* 2. Error State (Initial Fetch Failed) */
+        <ErrorState
+          isOffline={isNetworkError(error)}
+          message={error}
+          retryAction={loadVehicles}
+          style={{ flex: 1 }}
+        />
       ) : viewMode === 'list' ? (
-        /* List View Mode */
+        /* 3. List View Mode (Success & Empty States) */
         <FlatList
           data={vehicles}
           keyExtractor={(item) => item.id}
@@ -219,7 +225,7 @@ export const ExploreScreen: React.FC = () => {
           refreshing={isLoading}
           onRefresh={loadVehicles}
           ListEmptyComponent={
-            /* Empty State */
+            /* 4. Empty State */
             <EmptyState
               icon="search-outline"
               title="No Vehicles Found"

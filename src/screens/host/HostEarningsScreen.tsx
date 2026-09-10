@@ -15,13 +15,16 @@ import colors from '../../constants/colors';
 import { borderRadius, shadows, typography } from '../../constants/theme';
 import Button from '../../components/common/Button';
 import Header from '../../components/common/Header';
+import Loader from '../../components/common/Loader';
+import ErrorState from '../../components/common/ErrorState';
+import { isNetworkError } from '../../services/errorHandler';
 import { useAppDispatch, useAppSelector } from '../../store';
 import { deductBalanceAfterPayout, fetchHostDashboard } from '../../store/slices/hostSlice';
 import { hostService } from '../../services/hostService';
 
 export const HostEarningsScreen: React.FC = () => {
   const dispatch = useAppDispatch();
-  const { summary, isLoading } = useAppSelector((state) => state.host);
+  const { summary, isLoading, error } = useAppSelector((state) => state.host);
 
   const [period, setPeriod] = useState<'daily' | 'weekly' | 'monthly'>('monthly');
   const [isWithdrawing, setIsWithdrawing] = useState(false);
@@ -36,6 +39,33 @@ export const HostEarningsScreen: React.FC = () => {
     await dispatch(fetchHostDashboard());
     setRefreshing(false);
   };
+
+  // 1. Loading State
+  if (isLoading && !summary && !refreshing) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor={colors.surface} />
+        <Header title="Host Earnings & Commission" />
+        <Loader message="Loading earnings..." />
+      </SafeAreaView>
+    );
+  }
+
+  // 2. Error State
+  if (error && !summary && !refreshing) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor={colors.surface} />
+        <Header title="Host Earnings & Commission" />
+        <ErrorState
+          isOffline={isNetworkError(error)}
+          message={error}
+          retryAction={onRefresh}
+          style={{ flex: 1 }}
+        />
+      </SafeAreaView>
+    );
+  }
 
   const handleWithdraw = async () => {
     if (summary.availableBalance <= 0) {

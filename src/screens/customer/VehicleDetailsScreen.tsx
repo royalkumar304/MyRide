@@ -22,8 +22,11 @@ import PriceCard from '../../components/vehicle/PriceCard';
 import HostCard from '../../components/vehicle/HostCard';
 import Button from '../../components/common/Button';
 import Header from '../../components/common/Header';
+import Loader from '../../components/common/Loader';
+import ErrorState from '../../components/common/ErrorState';
+import EmptyState from '../../components/common/EmptyState';
+import { getFriendlyErrorMessage, isNetworkError } from '../../services/errorHandler';
 import { useAppDispatch, useAppSelector } from '../../store';
-import { ActivityIndicator } from 'react-native';
 import { upsertVehicle, toggleSaveVehicle } from '../../store/slices/vehicleSlice';
 import { vehicleService } from '../../services/vehicleService';
 import { Vehicle } from '../../types';
@@ -40,8 +43,28 @@ export const VehicleDetailsScreen: React.FC<Props> = ({ navigation, route }) => 
 
   const [vehicle, setVehicle] = useState<Vehicle | null>(matchedVehicle || null);
   const [loading, setLoading] = useState(!matchedVehicle);
+  const [error, setError] = useState<string | null>(null);
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [carouselWidth, setCarouselWidth] = useState(390);
+
+  const loadVehicle = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const res = await vehicleService.getVehicleById(vehicleId);
+      if (res.success && res.data) {
+        setVehicle(res.data);
+        dispatch(upsertVehicle(res.data));
+      } else {
+        setError(getFriendlyErrorMessage(res.message || 'Requested data was not found.', res.statusCode || 404));
+      }
+    } catch (err: any) {
+      console.warn('[VehicleDetailsScreen] Error loading vehicle:', err);
+      setError(getFriendlyErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (matchedVehicle) {
@@ -50,26 +73,7 @@ export const VehicleDetailsScreen: React.FC<Props> = ({ navigation, route }) => 
       return;
     }
 
-    let isMounted = true;
-    const loadVehicle = async () => {
-      try {
-        setLoading(true);
-        const res = await vehicleService.getVehicleById(vehicleId);
-        if (isMounted && res.success && res.data) {
-          setVehicle(res.data);
-          dispatch(upsertVehicle(res.data));
-        }
-      } catch (err) {
-        console.warn('[VehicleDetailsScreen] Error loading vehicle:', err);
-      } finally {
-        if (isMounted) setLoading(false);
-      }
-    };
-
     loadVehicle();
-    return () => {
-      isMounted = false;
-    };
   }, [vehicleId, matchedVehicle, dispatch]);
 
   const isSaved = vehicle ? savedVehicleIds.includes(vehicle.id) : false;
@@ -88,17 +92,47 @@ export const VehicleDetailsScreen: React.FC<Props> = ({ navigation, route }) => 
     }
   };
 
-  if (loading || !vehicle) {
+  // 1. Loading State
+  if (loading) {
     return (
       <SafeAreaView style={styles.container}>
         <StatusBar barStyle="dark-content" backgroundColor={colors.surface} />
         <Header title="Vehicle Details" onBack={() => navigation.goBack()} />
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-          <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={{ marginTop: 12, color: colors.muted, fontSize: 14 }}>
-            Loading vehicle details...
-          </Text>
-        </View>
+        <Loader message="Loading vehicle details..." />
+      </SafeAreaView>
+    );
+  }
+
+  // 2. Error State
+  if (error) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor={colors.surface} />
+        <Header title="Vehicle Details" onBack={() => navigation.goBack()} />
+        <ErrorState
+          isOffline={isNetworkError(error)}
+          message={error}
+          retryAction={loadVehicle}
+          style={{ flex: 1 }}
+        />
+      </SafeAreaView>
+    );
+  }
+
+  // 3. Empty State (404 Not Found)
+  if (!vehicle) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor={colors.surface} />
+        <Header title="Vehicle Details" onBack={() => navigation.goBack()} />
+        <EmptyState
+          icon="car-outline"
+          title="Vehicle Not Found"
+          subtitle="This vehicle is no longer available or was not found on the platform."
+          actionTitle="Explore Other Rides"
+          onAction={() => navigation.goBack()}
+          style={{ flex: 1 }}
+        />
       </SafeAreaView>
     );
   }

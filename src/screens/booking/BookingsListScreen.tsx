@@ -18,7 +18,10 @@ import colors from '../../constants/colors';
 import { borderRadius, typography } from '../../constants/theme';
 import BookingCard from '../../components/booking/BookingCard';
 import EmptyState from '../../components/common/EmptyState';
+import ErrorState from '../../components/common/ErrorState';
+import Loader from '../../components/common/Loader';
 import Button from '../../components/common/Button';
+import { isNetworkError } from '../../services/errorHandler';
 import { useAppDispatch, useAppSelector } from '../../store';
 import { fetchBookings } from '../../store/slices/bookingSlice';
 
@@ -75,8 +78,8 @@ export const BookingsListScreen: React.FC = () => {
         })}
       </View>
 
-      {/* Error Banner with Retry */}
-      {error && (
+      {/* Error Banner when bookings already exist */}
+      {error && bookings.length > 0 && (
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>{error}</Text>
           <TouchableOpacity onPress={handleRefresh} style={styles.retryBtn}>
@@ -85,13 +88,19 @@ export const BookingsListScreen: React.FC = () => {
         </View>
       )}
 
-      {/* Bookings List */}
+      {/* 1. Loading State */}
       {isLoading && bookings.length === 0 ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={styles.loadingText}>Loading your rides from server...</Text>
-        </View>
+        <Loader message="Loading your rides from server..." />
+      ) : error && bookings.length === 0 ? (
+        /* 2. Error State */
+        <ErrorState
+          isOffline={isNetworkError(error)}
+          message={error}
+          retryAction={handleRefresh}
+          style={{ flex: 1 }}
+        />
       ) : (
+        /* 3. Success & 4. Empty State */
         <FlatList
           data={filteredBookings}
           keyExtractor={(item) => item.id}
