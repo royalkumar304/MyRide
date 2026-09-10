@@ -17,18 +17,12 @@ router.get('/health', (req, res) => {
   const statusCode = dbStatus.isHealthy ? 200 : 503;
 
   res.status(statusCode).json({
-    status: dbStatus.isHealthy ? 'healthy' : 'unhealthy',
+    status: dbStatus.isHealthy ? 'ok' : 'unhealthy',
+    database: dbStatus.status,
+    environment: ENV.NODE_ENV,
+    timestamp: new Date().toISOString(),
     platform: 'MyRide Backend API',
     tagline: 'Apni Ride. Apna Choice.',
-    timestamp: new Date().toISOString(),
-    environment: ENV.NODE_ENV,
-    database: {
-      status: dbStatus.status,
-      mode: dbStatus.mode,
-      healthy: dbStatus.isHealthy,
-      readyState: dbStatus.readyState,
-      error: dbStatus.error || undefined,
-    },
     commissionRule: '15% platform commission stored dynamically in database',
   });
 });

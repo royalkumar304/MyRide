@@ -77,65 +77,182 @@ npm install
 
 ---
 
-## 5. Environment Variables
+## 5. Environment Variables & Security Isolation
 
-Create a `.env` file in the project root based on the provided template:
+MyRide enforces strict client/server security separation:
+- **Mobile Frontend**: Only accesses client-safe public configuration prefixed with `EXPO_PUBLIC_`.
+- **Backend API**: Securely holds sensitive secrets (Razorpay Secret, JWT Secret, MongoDB URI, Cloudinary API Secret). **Never** exposed to the mobile app.
 
+### A. Mobile Application (`.env`)
 ```env
-# API & Backend
-API_BASE_URL=https://api.myride.in/v1
+# Central Backend API Endpoint
+EXPO_PUBLIC_API_URL=http://localhost:5000/api/v1
 
-# Google Maps Platform
-GOOGLE_MAPS_API_KEY=AIzaSy_YOUR_GOOGLE_MAPS_KEY_HERE
+# Client-Safe Public Keys
+EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=AIzaSy_YOUR_GOOGLE_MAPS_KEY_HERE
+EXPO_PUBLIC_RAZORPAY_KEY_ID=rzp_test_YOUR_KEY_ID
+EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME=myride-assets
+EXPO_PUBLIC_CLOUDINARY_PRESET=vehicle_documents
+EXPO_PUBLIC_FIREBASE_API_KEY=AIzaSy_YOUR_FIREBASE_KEY
+EXPO_PUBLIC_FIREBASE_PROJECT_ID=myride-mobility
+```
 
-# Razorpay Payment Gateway
+### B. Backend API (`services/api/.env`)
+```env
+# Server & Port
+PORT=5000
+NODE_ENV=development
+
+# Database & Cache
+MONGODB_URI=mongodb://localhost:27017/myride
+REDIS_URL=redis://localhost:6379
+
+# Development In-Memory Store (Optional for local testing without MongoDB)
+USE_MEMORY_STORE=false
+
+# Authentication Secret (Strictly Backend)
+JWT_SECRET=myride_super_secure_jwt_signing_secret_2026
+JWT_EXPIRES_IN=7d
+EXPOSE_DEV_OTP=true
+
+# Payment Secrets (Strictly Backend)
 RAZORPAY_KEY_ID=rzp_test_YOUR_KEY_ID
-RAZORPAY_KEY_SECRET=YOUR_RAZORPAY_SECRET
+RAZORPAY_KEY_SECRET=YOUR_PRIVATE_RAZORPAY_SECRET
 
-# Firebase Cloud Messaging
-FIREBASE_API_KEY=AIzaSy_YOUR_FIREBASE_KEY
-FIREBASE_PROJECT_ID=myride-mobility
-FIREBASE_MESSAGING_SENDER_ID=1092837465
-FIREBASE_APP_ID=1:1092837465:web:abcdef123456
-
-# Cloudinary Document & Image Storage
+# Cloud Storage
 CLOUDINARY_CLOUD_NAME=myride-assets
-CLOUDINARY_PRESET=vehicle_documents
+CLOUDINARY_API_KEY=YOUR_CLOUDINARY_KEY
+CLOUDINARY_API_SECRET=YOUR_CLOUDINARY_SECRET
 ```
 
-> **Security Note**: Never commit actual API keys or secrets to version control.
+> ⚠️ **Security Policy**: In `NODE_ENV=production`, fallback to memory store is strictly prohibited. Production database failure safely halts startup or reports 503 Unhealthy on `/health`.
 
 ---
 
-## 6. Running Locally
+## 6. Local Network & Mobile Setup
 
-### Start Expo Development Server
+When developing locally across emulators, simulators, or physical mobile devices, configure `EXPO_PUBLIC_API_URL` to match your runtime target:
 
+| Target Runtime | `EXPO_PUBLIC_API_URL` | Notes |
+| :--- | :--- | :--- |
+| **iOS Simulator** | `http://localhost:5000/api/v1` | Shares host loopback |
+| **Web Browser** | `http://localhost:5000/api/v1` | Local development |
+| **Android Emulator** | `http://10.0.2.2:5000/api/v1` | Android Studio loopback alias |
+| **Physical Phone (Expo Go)** | `http://<YOUR_LAN_IP>:5000/api/v1` | Connected to same Wi-Fi |
+
+### Finding Your Local LAN IP:
+- **Windows (PowerShell)**:
+  ```powershell
+  ipconfig | Select-String "IPv4"
+  # Example output: 192.168.1.15
+  ```
+- **macOS / Linux**:
+  ```bash
+  ifconfig | grep "inet " | grep -v 127.0.0.1
+  ```
+
+Update your `.env`:
+```env
+EXPO_PUBLIC_API_URL=http://192.168.1.15:5000/api/v1
+```
+
+### Starting the Stack:
 ```bash
-npx expo start
-```
+# 1. Start Backend API (Port 5000)
+npm run dev:api
 
-### Running on Targets
-- **Android**: Press `a` in terminal or run `npm run android`
-- **iOS**: Press `i` in terminal or run `npm run ios` (macOS required)
-- **Web Browser**: Press `w` in terminal or run `npm run web`
-- **Physical Device**: Scan the QR code using the **Expo Go** app on Android or Camera app on iOS.
+# 2. Start Expo Mobile App
+npm start
+```
 
 ---
 
-## 7. Backend Integration Architecture
+## 7. Authentication Flow
 
-The mobile app includes a clean, decoupled service layer in `src/services/`:
-- `authService.ts` -> `/auth/send-otp`, `/auth/verify-otp`, `/auth/signup`
-- `vehicleService.ts` -> `/vehicles`, `/vehicles/:id`, `/vehicles/host`
-- `bookingService.ts` -> `/bookings`, `/bookings/:id/cancel`, `/bookings/:id/inspection`
-- `paymentService.ts` -> `/payments/create-order`, `/payments/verify`
-- `hostService.ts` -> `/host/dashboard`, `/host/payout`
+MyRide enforces a secure token restoration lifecycle with hardware-backed encryption (`expo-secure-store`). The app **never** assumes authentication is valid simply because a token exists.
 
-To connect to a live Node.js/Express backend, replace `mockApiCall` with standard `fetch` or `axios` instances using `getAuthToken()` for `Bearer JWT` headers.
+```
+App Launch
+    ↓
+Check stored token in SecureStore (expo-secure-store)
+    ↓
+[No token] ───────────────➔ Display Splash ➔ Route to Login
+    ↓
+[Token exists]
+    ↓
+GET /api/v1/auth/me (Backend Verification)
+    ↓
+[200 OK (Valid Session)] ──➔ Restore Profile ➔ Customer / Host App
+    ↓
+[401 / Invalid / Expired] ─➔ Clear SecureStore & ApiClient Token ➔ Route to Login
+```
 
-MongoDB schemas are fully defined in:
-`backend_architecture/models/index.ts`
+- **OTP Verification**: In development, `POST /auth/send-otp` generates SMS logs and optionally includes dev OTP when `EXPOSE_DEV_OTP=true`. In production, OTP values are strictly suppressed from payloads.
+- **Hardware-Backed Secure Storage**: Native iOS Keychain and Android Keystore store user JWTs. Plain `AsyncStorage` is never used for authentication tokens on mobile devices.
+
+---
+
+## 8. Available API Endpoints
+
+Base URL: `http://localhost:5000/api/v1` (or `EXPO_PUBLIC_API_URL`)
+
+### System & Health
+| Method | Endpoint | Auth | Description |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/health` | Public | Real-time health status: API status (`ok`), MongoDB status (`connected`), environment, and timestamp. |
+
+### Authentication
+| Method | Endpoint | Auth | Description |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/auth/send-otp` | Public | Dispatches 6-digit OTP to Indian mobile number (`+91XXXXXXXXXX`). |
+| `POST` | `/auth/verify-otp` | Public | Verifies OTP code and returns authenticated session JWT + user profile. |
+| `POST` | `/auth/signup` | Public | Completes new customer or host onboarding and issues JWT. |
+| `GET` | `/auth/me` | Bearer JWT | Validates current session token and returns active user profile. |
+| `POST` | `/auth/login-admin` | Public | Authenticates admin credentials for control panel. |
+
+### Vehicles & Pricing Engine
+| Method | Endpoint | Auth | Description |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/vehicles` | Public | Lists available vehicles with query filters (`city`, `area`, `vehicleType`, `brand`, `price`, `fuel`, `transmission`, `seats`, `rating`, `distance`, `availability`). |
+| `GET` | `/vehicles/cities` | Public | Returns supported tier-2 and tier-3 cities and mobility hubs. |
+| `GET` | `/vehicles/:id` | Public | Retrieves detailed vehicle specifications, pricing, host info, and features. |
+| `POST` | `/vehicles/quote` | Public | Calculates server-authoritative fare quote (base fare, 15% platform commission, GST taxes, delivery fee, refundable security deposit). |
+| `GET` | `/vehicles/:id/reviews` | Public | Retrieves verified customer reviews and ratings for a vehicle. |
+
+### Bookings & Digital Handover
+| Method | Endpoint | Auth | Description |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/bookings` | Bearer JWT | Reserves vehicle, validates slots, computes canonical `booking.pricing`, and issues `bookingId` (e.g. `MYR-123456`). |
+| `GET` | `/bookings` | Bearer JWT | Retrieves active, upcoming, and past trips for the authenticated user/host. |
+| `GET` | `/bookings/:id` | Bearer JWT | Retrieves single booking details by MongoDB `_id` or canonical `bookingId`. |
+| `POST` | `/bookings/:id/cancel` | Bearer JWT | Cancels booking and applies cancellation policy. |
+| `POST` | `/bookings/:id/handover/start` | Bearer JWT | Digital Pickup: Records start odometer, fuel level, checklist, and inspection photos. Status ➔ `ACTIVE`. |
+| `POST` | `/bookings/:id/handover/complete` | Bearer JWT | Return Handover: Records return odometer, fuel, damage checklist. Status ➔ `COMPLETED` and credits host earnings. |
+| `POST` | `/reviews` | Bearer JWT | Submits post-trip star rating and feedback. |
+
+### Payment Gateway (Razorpay)
+| Method | Endpoint | Auth | Description |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/payments/create-order` | Bearer JWT | Generates server-side Razorpay order ID in paise matching server `booking.pricing.totalAmount`. |
+| `POST` | `/payments/verify` | Bearer JWT | Verifies Razorpay HMAC SHA-256 signature and records payment completion. |
+
+### Host / Vehicle Owner
+| Method | Endpoint | Auth | Description |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/host/dashboard` | Bearer JWT | Real-time host summary: Gross bookings, 15% commission deductions, net earnings, active fleet. |
+| `GET` | `/host/vehicles` | Bearer JWT | Retrieves all vehicles owned by the authenticated host. |
+| `POST` | `/host/vehicles` | Bearer JWT | Submits newly listed vehicle to MongoDB with specs, pricing, GeoJSON location, and RC documents. |
+| `GET` | `/host/earnings` | Bearer JWT | Visual earnings breakdown, commission statement, and payout history. |
+
+### Admin Control Panel
+| Method | Endpoint | Auth | Description |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/admin/stats` | Admin JWT | Aggregated GMV, total completed bookings, commission revenue. |
+| `GET` | `/admin/vehicles/pending` | Admin JWT | Lists vehicle onboarding requests requiring verification. |
+| `POST` | `/admin/vehicles/:id/approve` | Admin JWT | Approves vehicle for public search and bookings. |
+| `POST` | `/admin/vehicles/:id/reject` | Admin JWT | Rejects vehicle with review notes. |
+| `GET` | `/admin/settings` | Admin JWT | Retrieves configurable commission percentages (Cars: 15%, Bikes: 12%, EVs: 10%). |
+| `PUT` | `/admin/settings` | Admin JWT | Dynamically updates platform commission and pricing rules. |
 
 ---
 
