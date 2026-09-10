@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   SafeAreaView,
   FlatList,
   TouchableOpacity,
+  ActivityIndicator,
   StatusBar,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -15,6 +16,7 @@ import { RootStackParamList } from '../../navigation/types';
 import colors from '../../constants/colors';
 import { borderRadius, shadows, typography } from '../../constants/theme';
 import Input from '../../components/common/Input';
+import Button from '../../components/common/Button';
 import VehicleCard from '../../components/vehicle/VehicleCard';
 import FilterModal from '../../components/vehicle/FilterModal';
 import EmptyState from '../../components/common/EmptyState';
@@ -37,73 +39,73 @@ export const ExploreScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
   const dispatch = useAppDispatch();
 
-  const { vehicles, savedVehicleIds, searchQuery, filters } = useAppSelector(
+  const { vehicles, savedVehicleIds, searchQuery, filters, isLoading } = useAppSelector(
     (state) => state.vehicles
   );
   const { selectedCity } = useAppSelector((state) => state.ui);
 
   const [filterModalVisible, setFilterModalVisible] = useState(false);
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
+  const [error, setError] = useState<string | null>(null);
+  const [debouncedQuery, setDebouncedQuery] = useState(searchQuery);
 
-  // Load vehicles from real API
-  React.useEffect(() => {
-    let isMounted = true;
-    const fetchVehicles = async () => {
-      try {
-        dispatch(setVehiclesLoading(true));
-        const res = await vehicleService.getVehicles({
-          ...filters,
-          city: selectedCity?.name,
-        });
-        if (isMounted && res.success && res.data) {
-          dispatch(setVehicles(res.data));
-        }
-      } catch (err) {
-        console.warn('[ExploreScreen] Error fetching vehicles:', err);
-      } finally {
-        if (isMounted) {
-          dispatch(setVehiclesLoading(false));
-        }
+  // Debounce search input changes by 350ms to optimize network requests
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedQuery(searchQuery);
+    }, 350);
+    return () => clearTimeout(handler);
+  }, [searchQuery]);
+
+  // Load vehicles from backend using live query parameters
+  const loadVehicles = useCallback(async () => {
+    try {
+      dispatch(setVehiclesLoading(true));
+      setError(null);
+
+      const res = await vehicleService.getVehicles({
+        city: selectedCity?.name,
+        area: filters.area,
+        category: filters.category,
+        brand: filters.brand,
+        minPrice: filters.minPrice,
+        maxPrice: filters.maxPrice,
+        fuelTypes: filters.fuelTypes,
+        transmissions: filters.transmissions,
+        seats: filters.seats,
+        seatingCapacity: filters.seatingCapacity,
+        rating: filters.minRating || filters.rating,
+        distance: filters.distance,
+        availability: filters.availability,
+        sortBy: filters.sortBy,
+        deliveryOnly: filters.deliveryOnly,
+        instantBookingOnly: filters.instantBookingOnly,
+        verifiedOnly: filters.verifiedOnly,
+        searchQuery: debouncedQuery,
+        q: debouncedQuery,
+      });
+
+      if (res.success && res.data) {
+        dispatch(setVehicles(res.data));
+      } else {
+        setError(res.message || 'Failed to fetch vehicles from server');
       }
-    };
+    } catch (err: any) {
+      console.warn('[ExploreScreen] Error fetching vehicles:', err);
+      setError(err?.message || 'Network error while fetching vehicles. Please retry.');
+    } finally {
+      dispatch(setVehiclesLoading(false));
+    }
+  }, [filters, selectedCity?.name, debouncedQuery, dispatch]);
 
-    fetchVehicles();
-    return () => {
-      isMounted = false;
-    };
-  }, [filters.category, filters.sortBy, filters.minPrice, filters.maxPrice, selectedCity?.name]);
+  useEffect(() => {
+    loadVehicles();
+  }, [loadVehicles]);
 
-  // Filter logic
-  const filteredVehicles = vehicles.filter((v) => {
-    if (filters.category && filters.category !== 'all' && v.category !== filters.category) {
-      return false;
-    }
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      const match =
-        v.name.toLowerCase().includes(q) ||
-        v.brand.toLowerCase().includes(q) ||
-        v.area.toLowerCase().includes(q) ||
-        v.city.toLowerCase().includes(q);
-      if (!match) return false;
-    }
-    if (filters.fuelTypes && filters.fuelTypes.length > 0 && !filters.fuelTypes.includes(v.fuelType)) {
-      return false;
-    }
-    if (filters.transmissions && filters.transmissions.length > 0 && !filters.transmissions.includes(v.transmission)) {
-      return false;
-    }
-    if (filters.deliveryOnly && !v.deliveryAvailable) {
-      return false;
-    }
-    if (filters.instantBookingOnly && !v.instantBooking) {
-      return false;
-    }
-    if (filters.verifiedOnly && !v.isHostVerified) {
-      return false;
-    }
-    return true;
-  });
+  const handleResetFilters = () => {
+    dispatch(resetFilters());
+    dispatch(setSearchQuery(''));
+  };
 
   const handleVehiclePress = (vehicle: Vehicle) => {
     dispatch(setSelectedVehicle(vehicle));
@@ -136,7 +138,7 @@ export const ExploreScreen: React.FC = () => {
         {/* View Toggle Bar (List vs Map) */}
         <View style={styles.viewToggleBar}>
           <Text style={styles.resultsCount}>
-            {filteredVehicles.length} {filteredVehicles.length === 1 ? 'vehicle' : 'vehicles'} found
+            {vehicles.length} {vehicles.length === 1 ? 'vehicle' : 'vehicles'} found
           </Text>
 
           <View style={styles.togglePill}>
@@ -183,20 +185,47 @@ export const ExploreScreen: React.FC = () => {
         </View>
       </View>
 
-      {/* Main View Mode Rendering */}
-      {viewMode === 'list' ? (
+      {/* Error State Banner */}
+      {error && (
+        <View style={styles.errorContainer}>
+          <View style={styles.errorRow}>
+            <Ionicons name="alert-circle-outline" size={22} color={colors.danger} />
+            <Text style={styles.errorText} numberOfLines={2}>
+              {error}
+            </Text>
+          </View>
+          <TouchableOpacity onPress={loadVehicles} style={styles.retryInlineBtn}>
+            <Ionicons name="refresh-outline" size={16} color={colors.primary} />
+            <Text style={styles.retryInlineText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Loading State (Initial Fetch) */}
+      {isLoading && vehicles.length === 0 ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={styles.loadingText}>
+            Searching available rides in {selectedCity.name}...
+          </Text>
+        </View>
+      ) : viewMode === 'list' ? (
+        /* List View Mode */
         <FlatList
-          data={filteredVehicles}
+          data={vehicles}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
+          refreshing={isLoading}
+          onRefresh={loadVehicles}
           ListEmptyComponent={
+            /* Empty State */
             <EmptyState
               icon="search-outline"
               title="No Vehicles Found"
-              subtitle="Try adjusting your search keywords or clearing some filters."
+              subtitle={`No vehicles match your search criteria in ${selectedCity.name}. Try adjusting your filters or search terms.`}
               actionTitle="Reset Filters"
-              onAction={() => dispatch(resetFilters())}
+              onAction={handleResetFilters}
             />
           }
           renderItem={({ item }) => (
@@ -218,9 +247,9 @@ export const ExploreScreen: React.FC = () => {
               Showing verified hubs in {selectedCity.name}
             </Text>
 
-            {/* Simulated map pins */}
+            {/* Map vehicle pins */}
             <View style={styles.pinsList}>
-              {filteredVehicles.slice(0, 4).map((veh) => (
+              {vehicles.slice(0, 4).map((veh) => (
                 <TouchableOpacity
                   key={veh.id}
                   activeOpacity={0.8}
@@ -239,13 +268,16 @@ export const ExploreScreen: React.FC = () => {
         </View>
       )}
 
-      {/* Filter Modal */}
+      {/* Filter Bottom Sheet Modal */}
       <FilterModal
         visible={filterModalVisible}
         onClose={() => setFilterModalVisible(false)}
         filters={filters}
-        onApply={(newFilters) => dispatch(setFilters(newFilters))}
-        onReset={() => dispatch(resetFilters())}
+        onApply={(newFilters) => {
+          dispatch(setFilters(newFilters));
+          setFilterModalVisible(false);
+        }}
+        onReset={handleResetFilters}
       />
     </SafeAreaView>
   );
@@ -260,45 +292,49 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     paddingHorizontal: 16,
     paddingTop: 12,
-    paddingBottom: 10,
+    paddingBottom: 8,
     borderBottomWidth: 1,
     borderBottomColor: colors.borderLight,
+    ...shadows.subtle,
   },
   searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 12,
   },
   searchInputContainer: {
     flex: 1,
     marginBottom: 0,
-    marginRight: 10,
   },
   filterBtn: {
     width: 48,
     height: 48,
     borderRadius: borderRadius.md,
-    backgroundColor: colors.primaryLight,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
   },
   viewToggleBar: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 10,
+    justifyContent: 'space-between',
+    marginTop: 12,
+    paddingBottom: 4,
   },
   resultsCount: {
     ...typography.caption,
-    fontWeight: '600',
-    color: colors.darkMuted,
+    fontWeight: '700',
+    color: colors.muted,
   },
   togglePill: {
     flexDirection: 'row',
     backgroundColor: colors.surfaceVariant,
-    borderRadius: borderRadius.full,
     padding: 3,
+    borderRadius: borderRadius.full,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.borderLight,
   },
   toggleBtn: {
     flexDirection: 'row',
@@ -306,22 +342,78 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 5,
     borderRadius: borderRadius.full,
+    gap: 4,
   },
   toggleBtnActive: {
     backgroundColor: colors.surface,
     ...shadows.subtle,
   },
+
   toggleText: {
     fontSize: 12,
     fontWeight: '600',
     color: colors.muted,
-    marginLeft: 4,
   },
   toggleTextActive: {
     color: colors.primary,
+    fontWeight: '700',
   },
   listContent: {
     padding: 16,
+    paddingBottom: 32,
+  },
+  loadingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: colors.muted,
+    fontWeight: '500',
+  },
+  errorContainer: {
+    margin: 16,
+    marginBottom: 0,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: borderRadius.md,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  errorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+    marginRight: 8,
+  },
+  errorText: {
+    fontSize: 13,
+    color: colors.danger,
+    fontWeight: '600',
+    flex: 1,
+  },
+  retryInlineBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: borderRadius.sm,
+    gap: 4,
+  },
+  retryInlineText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.primary,
   },
   mapContainer: {
     flex: 1,
@@ -330,28 +422,29 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   mapGraphic: {
-    width: '100%',
     alignItems: 'center',
     backgroundColor: colors.surface,
     padding: 24,
-    borderRadius: borderRadius.xl,
-    borderWidth: 1,
-    borderColor: colors.border,
+    borderRadius: borderRadius.lg,
+    width: '100%',
     ...shadows.card,
   },
   mapTitle: {
     ...typography.h3,
-    color: colors.dark,
     marginTop: 12,
+    color: colors.dark,
   },
   mapSubtitle: {
     ...typography.caption,
-    color: colors.body,
-    marginTop: 2,
-    marginBottom: 20,
+    color: colors.muted,
+    marginTop: 4,
+    textAlign: 'center',
   },
+
   pinsList: {
+    marginTop: 20,
     width: '100%',
+    gap: 10,
   },
   mapPinCard: {
     flexDirection: 'row',
@@ -359,18 +452,18 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceVariant,
     padding: 12,
     borderRadius: borderRadius.md,
-    marginBottom: 8,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.borderLight,
   },
   pinName: {
-    ...typography.bodyBold,
+    fontSize: 14,
+    fontWeight: '700',
     color: colors.dark,
   },
   pinPrice: {
-    ...typography.caption,
-    color: colors.primaryDark,
-    marginTop: 2,
+    fontSize: 12,
+    color: colors.primary,
+    fontWeight: '600',
   },
 });
 

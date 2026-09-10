@@ -63,16 +63,28 @@ export interface Vehicle {
 
 export interface VehicleFilterParams {
   category?: VehicleCategory | 'all';
+  vehicleType?: string;
   searchQuery?: string;
+  q?: string;
   city?: string;
+  area?: string;
+  brand?: string;
   minPrice?: number;
   maxPrice?: number;
+  price?: number;
+  fuelType?: FuelType | string;
   fuelTypes?: FuelType[];
+  transmission?: TransmissionType | string;
   transmissions?: TransmissionType[];
+  seats?: number;
   seatingCapacity?: number[];
+  rating?: number;
   minRating?: number;
+  distance?: number;
+  availability?: boolean | string;
   deliveryOnly?: boolean;
   instantBookingOnly?: boolean;
   verifiedOnly?: boolean;
-  sortBy?: 'price_asc' | 'price_desc' | 'rating' | 'nearest' | 'popularity';
+  sortBy?: 'price_asc' | 'price_desc' | 'rating' | 'popular' | 'nearest' | 'popularity';
 }
+

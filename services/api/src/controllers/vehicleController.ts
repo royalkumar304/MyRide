@@ -10,18 +10,52 @@ import { VehicleType } from '@myride/types';
 export async function listVehicles(req: Request, res: Response, next: NextFunction) {
   try {
     const query = VehicleSearchQuerySchema.parse(req.query);
-    const { city, vehicleType, transmission, fuelType, minPrice, maxPrice, sortBy = 'popular' } = query;
+    const {
+      city,
+      area,
+      vehicleType,
+      brand,
+      transmission,
+      fuelType,
+      minPrice,
+      maxPrice,
+      price,
+      seats,
+      rating,
+      distance,
+      availability,
+      sortBy = 'popular',
+      q,
+    } = query;
+
+    const effectiveMaxPrice = maxPrice ?? price;
 
     let vehicles: any[] = [];
     if (isUsingMemoryStore()) {
       vehicles = memoryStore.vehicles.filter((v) => {
         if (v.verificationStatus !== 'APPROVED') return false;
         if (city && v.location.city.toLowerCase() !== city.toLowerCase()) return false;
+        if (area && v.location.area.toLowerCase() !== area.toLowerCase()) return false;
         if (vehicleType && v.type.toLowerCase() !== vehicleType.toLowerCase()) return false;
+        if (brand && !v.brand.toLowerCase().includes(brand.toLowerCase())) return false;
         if (transmission && v.transmission.toLowerCase() !== transmission.toLowerCase()) return false;
         if (fuelType && v.fuelType.toLowerCase() !== fuelType.toLowerCase()) return false;
         if (minPrice && v.pricing.dailyRate < minPrice) return false;
-        if (maxPrice && v.pricing.dailyRate > maxPrice) return false;
+        if (effectiveMaxPrice && v.pricing.dailyRate > effectiveMaxPrice) return false;
+        if (seats && (v.seats ?? 0) < seats) return false;
+        if (rating && (v.rating ?? 0) < rating) return false;
+        if (distance && (v.distanceKm ?? 0) > distance) return false;
+        if (availability && availability !== 'all' && v.availability?.isAvailable === false) return false;
+        if (q) {
+          const search = q.toLowerCase();
+          const matches =
+            v.name?.toLowerCase().includes(search) ||
+            v.brand?.toLowerCase().includes(search) ||
+            v.model?.toLowerCase().includes(search) ||
+            v.location?.city?.toLowerCase().includes(search) ||
+            v.location?.area?.toLowerCase().includes(search);
+          if (!matches) return false;
+        }
         return true;
       });
 
@@ -35,13 +69,29 @@ export async function listVehicles(req: Request, res: Response, next: NextFuncti
     } else {
       const filter: any = { verificationStatus: 'APPROVED' };
       if (city) filter['location.city'] = new RegExp(`^${city}$`, 'i');
+      if (area) filter['location.area'] = new RegExp(area, 'i');
       if (vehicleType) filter.type = vehicleType.toUpperCase();
-      if (transmission) filter.transmission = transmission;
-      if (fuelType) filter.fuelType = fuelType;
-      if (minPrice || maxPrice) {
+      if (brand) filter.brand = new RegExp(brand, 'i');
+      if (transmission) filter.transmission = new RegExp(`^${transmission}$`, 'i');
+      if (fuelType) filter.fuelType = new RegExp(`^${fuelType}$`, 'i');
+      if (minPrice || effectiveMaxPrice) {
         filter['pricing.dailyRate'] = {};
         if (minPrice) filter['pricing.dailyRate'].$gte = minPrice;
-        if (maxPrice) filter['pricing.dailyRate'].$lte = maxPrice;
+        if (effectiveMaxPrice) filter['pricing.dailyRate'].$lte = effectiveMaxPrice;
+      }
+      if (seats) filter.seats = { $gte: seats };
+      if (rating) filter.rating = { $gte: rating };
+      if (availability && availability !== 'all') {
+        filter['availability.isAvailable'] = availability === 'true' || availability === 'available';
+      }
+      if (q) {
+        filter.$or = [
+          { name: new RegExp(q, 'i') },
+          { brand: new RegExp(q, 'i') },
+          { model: new RegExp(q, 'i') },
+          { 'location.city': new RegExp(q, 'i') },
+          { 'location.area': new RegExp(q, 'i') },
+        ];
       }
 
       let queryBuilder = VehicleModel.find(filter);
@@ -62,6 +112,7 @@ export async function listVehicles(req: Request, res: Response, next: NextFuncti
     next(error);
   }
 }
+
 
 export async function getVehicleById(req: Request, res: Response, next: NextFunction) {
   try {

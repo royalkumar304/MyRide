@@ -83,13 +83,22 @@ export const PaymentVerifySchema = VerifyPaymentSchema;
 
 export const VehicleSearchQuerySchema = z.object({
   city: z.string().optional(),
+  area: z.string().optional(),
   vehicleType: z.enum(['BIKE', 'SCOOTER', 'CAR', 'SUV', 'EV', 'bike', 'scooter', 'car', 'suv', 'ev']).optional(),
+  brand: z.string().optional(),
   transmission: z.string().optional(),
   fuelType: z.string().optional(),
   minPrice: z.coerce.number().optional(),
   maxPrice: z.coerce.number().optional(),
-  sortBy: z.enum(['popular', 'price_asc', 'price_desc', 'rating']).optional(),
+  price: z.coerce.number().optional(),
+  seats: z.coerce.number().optional(),
+  rating: z.coerce.number().optional(),
+  distance: z.coerce.number().optional(),
+  availability: z.string().optional(),
+  sortBy: z.enum(['popular', 'price_asc', 'price_desc', 'rating', 'nearest', 'popularity']).optional(),
+  q: z.string().optional(),
 });
+
 
 export const PlatformSettingsUpdateSchema = z.object({
   commission: z

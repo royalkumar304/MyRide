@@ -40,26 +40,61 @@ export const vehicleService = {
       if (params.city && params.city !== 'All Cities') {
         queryParts.push(`city=${encodeURIComponent(params.city)}`);
       }
-      if (params.category && params.category !== 'all') {
-        // Map frontend category to backend vehicleType enum (BIKE, CAR, SUV, EV)
+      if (params.area) {
+        queryParts.push(`area=${encodeURIComponent(params.area)}`);
+      }
+      if (params.vehicleType) {
+        queryParts.push(`vehicleType=${encodeURIComponent(params.vehicleType.toUpperCase())}`);
+      } else if (params.category && params.category !== 'all') {
         queryParts.push(`vehicleType=${encodeURIComponent(params.category.toUpperCase())}`);
       }
-      if (params.minPrice) {
+      if (params.brand) {
+        queryParts.push(`brand=${encodeURIComponent(params.brand)}`);
+      }
+      if (params.minPrice !== undefined) {
         queryParts.push(`minPrice=${encodeURIComponent(params.minPrice.toString())}`);
       }
-      if (params.maxPrice) {
+      if (params.maxPrice !== undefined) {
         queryParts.push(`maxPrice=${encodeURIComponent(params.maxPrice.toString())}`);
+      } else if (params.price !== undefined) {
+        queryParts.push(`price=${encodeURIComponent(params.price.toString())}`);
       }
-      if (params.fuelTypes && params.fuelTypes.length === 1) {
+      if (params.fuelType) {
+        queryParts.push(`fuelType=${encodeURIComponent(params.fuelType)}`);
+      } else if (params.fuelTypes && params.fuelTypes.length === 1) {
         queryParts.push(`fuelType=${encodeURIComponent(params.fuelTypes[0])}`);
       }
-      if (params.transmissions && params.transmissions.length === 1) {
+      if (params.transmission) {
+        queryParts.push(`transmission=${encodeURIComponent(params.transmission)}`);
+      } else if (params.transmissions && params.transmissions.length === 1) {
         queryParts.push(`transmission=${encodeURIComponent(params.transmissions[0])}`);
+      }
+      if (params.seats !== undefined) {
+        queryParts.push(`seats=${encodeURIComponent(params.seats.toString())}`);
+      } else if (params.seatingCapacity && params.seatingCapacity.length === 1) {
+        queryParts.push(`seats=${encodeURIComponent(params.seatingCapacity[0].toString())}`);
+      }
+      if (params.rating !== undefined) {
+        queryParts.push(`rating=${encodeURIComponent(params.rating.toString())}`);
+      } else if (params.minRating !== undefined) {
+        queryParts.push(`rating=${encodeURIComponent(params.minRating.toString())}`);
+      }
+      if (params.distance !== undefined) {
+        queryParts.push(`distance=${encodeURIComponent(params.distance.toString())}`);
+      }
+      if (params.availability !== undefined) {
+        queryParts.push(`availability=${encodeURIComponent(String(params.availability))}`);
       }
       if (params.sortBy) {
         queryParts.push(`sortBy=${encodeURIComponent(params.sortBy)}`);
       }
+      if (params.q) {
+        queryParts.push(`q=${encodeURIComponent(params.q)}`);
+      } else if (params.searchQuery) {
+        queryParts.push(`q=${encodeURIComponent(params.searchQuery)}`);
+      }
     }
+
 
     const queryString = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
     const response = await apiClient.get<{ success: boolean; count: number; vehicles: any[] }>(
