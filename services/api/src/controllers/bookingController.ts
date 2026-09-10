@@ -4,6 +4,7 @@ import { memoryStore } from '../config/store';
 import BookingModel from '../models/Booking';
 import VehicleModel from '../models/Vehicle';
 import HostEarningModel from '../models/HostEarning';
+import { ReviewModel } from '../models/ReviewAndMeta';
 import { calculateBookingPrice } from '../services/pricingEngine';
 import { isVehicleAvailableForDates } from '../services/availabilityService';
 import { generateBookingId } from '@myride/utils';
@@ -307,3 +308,124 @@ export async function completeHandover(req: any, res: Response, next: NextFuncti
     next(error);
   }
 }
+
+export async function cancelBooking(req: any, res: Response, next: NextFunction) {
+  try {
+    const { id } = req.params;
+    const { reason, cancelledBy = 'customer', refundPercentage = 100, refundAmount, hostInformedCustomer } = req.body;
+
+    let booking: any = null;
+    if (isUsingMemoryStore()) {
+      booking = memoryStore.bookings.find((b) => b._id === id || b.bookingId === id);
+      if (booking) {
+        booking.bookingStatus = 'CANCELLED';
+        booking.cancellationReason = reason;
+        booking.cancelledAt = new Date().toISOString();
+        booking.cancelledBy = cancelledBy;
+        booking.refundPercentage = refundPercentage;
+        booking.refundAmount = refundAmount;
+        booking.hostInformedCustomer = hostInformedCustomer;
+      }
+    } else {
+      booking = await BookingModel.findOneAndUpdate(
+        { $or: [{ _id: id }, { bookingId: id }] },
+        {
+          bookingStatus: 'CANCELLED',
+          cancellationReason: reason,
+        },
+        { new: true }
+      );
+    }
+
+    if (!booking) {
+      res.status(404).json({ success: false, message: 'Booking not found' });
+      return;
+    }
+
+    res.json({
+      success: true,
+      message: 'Booking cancelled successfully.',
+      booking,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function submitReview(req: any, res: Response, next: NextFunction) {
+  try {
+    const { bookingId, vehicleId, rating, comment, categoryRatings } = req.body;
+    const customerId = req.user?.userId || 'user_cust_1';
+    const customerName = req.user?.name || 'Customer';
+
+    let review: any = null;
+    if (isUsingMemoryStore()) {
+      review = {
+        _id: `rev_${Date.now()}`,
+        bookingId,
+        vehicleId,
+        customerId,
+        customerName,
+        rating,
+        categoryRatings: categoryRatings || {
+          vehicleCondition: rating,
+          hostBehaviour: rating,
+          pickupExperience: rating,
+          valueForMoney: rating,
+        },
+        comment,
+        createdAt: new Date().toISOString(),
+      };
+      if (!memoryStore.reviews) {
+        (memoryStore as any).reviews = [];
+      }
+      (memoryStore as any).reviews.push(review);
+    } else {
+      review = await ReviewModel.create({
+        bookingId,
+        vehicleId,
+        customerId,
+        customerName,
+        rating,
+        categoryRatings: categoryRatings || {
+          vehicleCondition: rating,
+          hostBehaviour: rating,
+          pickupExperience: rating,
+          valueForMoney: rating,
+        },
+        comment,
+      });
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'Review submitted successfully',
+      review,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getVehicleReviews(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { id } = req.params;
+    let reviews: any[] = [];
+
+    if (isUsingMemoryStore()) {
+      const storeReviews = (memoryStore as any).reviews || [];
+      reviews = storeReviews.filter((r: any) => r.vehicleId === id);
+    } else {
+      reviews = await ReviewModel.find({ vehicleId: id }).sort({ createdAt: -1 });
+    }
+
+    res.json({
+      success: true,
+      count: reviews.length,
+      reviews,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+

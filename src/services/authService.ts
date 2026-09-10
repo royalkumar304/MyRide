@@ -1,134 +1,142 @@
 import { User, UserRole } from '../types';
-import { mockApiCall, ApiResponse, setAuthToken } from './api';
+import { apiPost, apiGet, setAuthToken, ApiResponse, adaptBackendUserToMobile } from './api';
+import { mockAuthService, INITIAL_MOCK_USER } from './mock/mockAuthService';
 
-export const INITIAL_MOCK_USER: User = {
-  id: 'usr-lucknow-101',
-  fullName: 'Gaurav Mishra',
-  phoneNumber: '+91 99190 77665',
-  email: 'gaurav.mishra@example.com',
-  city: 'Lucknow',
-  avatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&q=80',
-  activeRole: 'CUSTOMER',
-  isKycVerified: true,
-  drivingLicenseNumber: 'UP32 20190014521',
-  drivingLicenseVerified: true,
-  referralCode: 'GAURAV200',
-  createdAt: '2024-01-01T00:00:00Z',
-};
+export { INITIAL_MOCK_USER };
 
 export const authService = {
   async sendOtp(phoneNumber: string): Promise<ApiResponse<{ otpSent: boolean; message: string; otp?: string; sentViaSms?: boolean; provider?: string }>> {
     const cleanPhone = phoneNumber.replace(/\D/g, '').slice(-10);
-    try {
-      const res = await fetch('http://localhost:5000/api/v1/auth/send-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: cleanPhone }),
-      });
-      const json = await res.json();
-      if (json.success) {
-        return {
-          data: {
-            otpSent: true,
-            message: json.message || `OTP sent to +91 ${cleanPhone}`,
-            otp: json.otp,
-            sentViaSms: json.sentViaSms,
-            provider: json.provider,
-          },
-          success: true,
-        };
-      }
-    } catch (err) {
-      // Fallback if backend server unreachable
+    const response = await apiPost<{
+      success: boolean;
+      message: string;
+      provider?: string;
+      sentViaSms?: boolean;
+      otp?: string;
+    }>('/auth/send-otp', { phone: cleanPhone });
+
+    if (response.success && response.data) {
+      return {
+        success: true,
+        data: {
+          otpSent: true,
+          message: response.data.message || `OTP sent to +91 ${cleanPhone}`,
+          otp: response.data.otp,
+          sentViaSms: response.data.sentViaSms,
+          provider: response.data.provider,
+        },
+      };
     }
 
-    const fallbackOtp = Math.floor(1000 + Math.random() * 9000).toString();
-    return mockApiCall({
-      otpSent: true,
-      message: `OTP sent successfully to +91 ${cleanPhone}`,
-      otp: fallbackOtp,
-      sentViaSms: false,
-      provider: 'Simulator',
-    });
+    // Fallback to mock service if backend is offline or unreachable
+    console.warn('[authService.sendOtp] Live API unreachable or failed. Falling back to mock.');
+    return mockAuthService.sendOtp(phoneNumber);
   },
 
-  async verifyOtp(phoneNumber: string, otp: string): Promise<ApiResponse<{ user: User; token: string }>> {
+  async verifyOtp(phoneNumber: string, otp: string): Promise<ApiResponse<{ user: User; token: string; requiresSignup?: boolean }>> {
     const cleanPhone = phoneNumber.replace(/\D/g, '').slice(-10);
-    try {
-      const res = await fetch('http://localhost:5000/api/v1/auth/verify-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: cleanPhone, otp }),
-      });
-      const json = await res.json();
-      if (json.success) {
-        const token = json.token || ('jwt_token_' + Date.now());
-        setAuthToken(token);
-        const user: User = {
-          id: json.user?.id || ('usr-' + Date.now()),
-          fullName: json.user?.name || 'MyRide User',
-          phoneNumber: `+91 ${cleanPhone}`,
-          email: json.user?.email || `user.${cleanPhone}@myride.in`,
-          city: json.user?.city || 'Lucknow',
-          avatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&q=80',
-          activeRole: (json.user?.role as UserRole) || 'CUSTOMER',
-          isKycVerified: json.user?.kycStatus === 'VERIFIED',
-          drivingLicenseNumber: 'UP32 20190014521',
-          drivingLicenseVerified: true,
-          referralCode: 'RIDE' + cleanPhone.slice(-4),
-          createdAt: new Date().toISOString(),
-        };
+    const response = await apiPost<{
+      success: boolean;
+      token?: string;
+      user?: any;
+      requiresSignup?: boolean;
+      message?: string;
+    }>('/auth/verify-otp', { phone: cleanPhone, otp });
+
+    if (response.success && response.data) {
+      if (response.data.requiresSignup) {
         return {
-          data: { user, token },
           success: true,
+          data: {
+            user: {
+              ...INITIAL_MOCK_USER,
+              phoneNumber: `+91 ${cleanPhone}`,
+              fullName: 'New MyRide User',
+            },
+            token: '',
+            requiresSignup: true,
+          },
+          message: response.data.message || 'Phone verified. Please complete signup.',
         };
-      } else if (json.message) {
-        throw new Error(json.message);
       }
-    } catch (err: any) {
-      if (err.message && !err.message.includes('fetch')) {
-        throw err;
+
+      if (response.data.token) {
+        setAuthToken(response.data.token);
       }
+
+      const user = response.data.user
+        ? adaptBackendUserToMobile(response.data.user)
+        : { ...INITIAL_MOCK_USER, phoneNumber: `+91 ${cleanPhone}` };
+
+      return {
+        success: true,
+        data: {
+          user,
+          token: response.data.token || 'jwt_token_' + Date.now(),
+        },
+      };
     }
 
-    const token = 'jwt_mock_token_' + Date.now();
-    setAuthToken(token);
-    return mockApiCall({
-      user: { ...INITIAL_MOCK_USER, phoneNumber: `+91 ${cleanPhone}` },
-      token,
-    });
+    console.warn('[authService.verifyOtp] Live API failed or offline. Using mockAuthService fallback.');
+    return mockAuthService.verifyOtp(phoneNumber, otp);
   },
 
-  async signup(data: { fullName: string; phoneNumber: string; email: string; city: string; initialRole: UserRole }): Promise<ApiResponse<{ user: User; token: string }>> {
-    const token = 'jwt_mock_token_' + Date.now();
-    setAuthToken(token);
-    const newUser: User = {
-      id: 'usr-' + Date.now(),
-      fullName: data.fullName,
-      phoneNumber: data.phoneNumber,
+  async signup(data: {
+    fullName: string;
+    phoneNumber: string;
+    email: string;
+    city: string;
+    initialRole: UserRole;
+  }): Promise<ApiResponse<{ user: User; token: string }>> {
+    const cleanPhone = data.phoneNumber.replace(/\D/g, '').slice(-10);
+    const response = await apiPost<{
+      success: boolean;
+      token?: string;
+      user?: any;
+      message?: string;
+    }>('/auth/signup', {
+      name: data.fullName,
+      phone: cleanPhone,
       email: data.email,
       city: data.city,
-      activeRole: data.initialRole,
-      isKycVerified: false,
-      referralCode: data.fullName.split(' ')[0].toUpperCase() + '200',
-      createdAt: new Date().toISOString(),
-    };
-    return mockApiCall({
-      user: newUser,
-      token,
+      role: data.initialRole,
     });
+
+    if (response.success && response.data && response.data.token) {
+      setAuthToken(response.data.token);
+      const user = adaptBackendUserToMobile(response.data.user);
+      return {
+        success: true,
+        data: {
+          user,
+          token: response.data.token,
+        },
+      };
+    }
+
+    console.warn('[authService.signup] Live API failed. Using mockAuthService fallback.');
+    return mockAuthService.signup(data);
+  },
+
+  async getProfile(): Promise<ApiResponse<User>> {
+    const response = await apiGet<{ success: boolean; user: any }>('/auth/me');
+    if (response.success && response.data?.user) {
+      return {
+        success: true,
+        data: adaptBackendUserToMobile(response.data.user),
+      };
+    }
+    return {
+      success: true,
+      data: INITIAL_MOCK_USER,
+    };
   },
 
   async switchRole(currentRole: UserRole): Promise<ApiResponse<{ activeRole: UserRole }>> {
-    const newRole: UserRole = currentRole === 'CUSTOMER' ? 'HOST' : 'CUSTOMER';
-    return mockApiCall({ activeRole: newRole }, 150);
+    return mockAuthService.switchRole(currentRole);
   },
 
   async updateKyc(licenseNumber: string): Promise<ApiResponse<Partial<User>>> {
-    return mockApiCall({
-      drivingLicenseNumber: licenseNumber,
-      drivingLicenseVerified: true,
-      isKycVerified: true,
-    }, 400);
+    return mockAuthService.updateKyc(licenseNumber);
   },
 };

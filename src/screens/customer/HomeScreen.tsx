@@ -21,7 +21,14 @@ import DateTimePickerModal from '../../components/modals/DateTimePickerModal';
 import Button from '../../components/common/Button';
 import { useAppDispatch, useAppSelector } from '../../store';
 import { setSelectedCity } from '../../store/slices/uiSlice';
-import { setSelectedCategory, toggleSaveVehicle, setSelectedVehicle } from '../../store/slices/vehicleSlice';
+import {
+  setSelectedCategory,
+  toggleSaveVehicle,
+  setSelectedVehicle,
+  setVehicles,
+  setVehiclesLoading,
+} from '../../store/slices/vehicleSlice';
+import { vehicleService } from '../../services/vehicleService';
 import { VehicleCategory } from '../../types';
 import { getTranslation } from '../../localization';
 
@@ -54,6 +61,33 @@ export const HomeScreen: React.FC = () => {
       setPickupLocation(`${defaultHub}, ${selectedCity.name}`);
     }
   }, [selectedCity]);
+
+  // Load vehicles from real API
+  useEffect(() => {
+    let isMounted = true;
+    const fetchVehicles = async () => {
+      try {
+        dispatch(setVehiclesLoading(true));
+        const res = await vehicleService.getVehicles({
+          city: selectedCity?.name,
+        });
+        if (isMounted && res.success && res.data) {
+          dispatch(setVehicles(res.data));
+        }
+      } catch (err) {
+        console.warn('[HomeScreen] Live vehicles fetch error:', err);
+      } finally {
+        if (isMounted) {
+          dispatch(setVehiclesLoading(false));
+        }
+      }
+    };
+
+    fetchVehicles();
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedCity?.name]);
 
   const categories: { key: VehicleCategory; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
     { key: 'bike', label: t.bikes, icon: 'bicycle-outline' },

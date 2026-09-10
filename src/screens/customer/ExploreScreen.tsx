@@ -25,7 +25,10 @@ import {
   resetFilters,
   toggleSaveVehicle,
   setSelectedVehicle,
+  setVehicles,
+  setVehiclesLoading,
 } from '../../store/slices/vehicleSlice';
+import { vehicleService } from '../../services/vehicleService';
 import { Vehicle } from '../../types';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
@@ -41,6 +44,34 @@ export const ExploreScreen: React.FC = () => {
 
   const [filterModalVisible, setFilterModalVisible] = useState(false);
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
+
+  // Load vehicles from real API
+  React.useEffect(() => {
+    let isMounted = true;
+    const fetchVehicles = async () => {
+      try {
+        dispatch(setVehiclesLoading(true));
+        const res = await vehicleService.getVehicles({
+          ...filters,
+          city: selectedCity?.name,
+        });
+        if (isMounted && res.success && res.data) {
+          dispatch(setVehicles(res.data));
+        }
+      } catch (err) {
+        console.warn('[ExploreScreen] Error fetching vehicles:', err);
+      } finally {
+        if (isMounted) {
+          dispatch(setVehiclesLoading(false));
+        }
+      }
+    };
+
+    fetchVehicles();
+    return () => {
+      isMounted = false;
+    };
+  }, [filters.category, filters.sortBy, filters.minPrice, filters.maxPrice, selectedCity?.name]);
 
   // Filter logic
   const filteredVehicles = vehicles.filter((v) => {

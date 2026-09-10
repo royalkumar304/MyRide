@@ -1,32 +1,60 @@
-import { Booking, BookingStatus, InspectionData, Review } from '../types';
-import { MOCK_BOOKINGS, MOCK_REVIEWS } from './mockData';
-import { mockApiCall, ApiResponse } from './api';
-
-let bookingsDatabase = [...MOCK_BOOKINGS];
-let reviewsDatabase = [...MOCK_REVIEWS];
+import { Booking, InspectionData, Review } from '../types';
+import { apiGet, apiPost, ApiResponse, adaptBackendBookingToMobile } from './api';
+import { mockBookingService } from './mock/mockBookingService';
 
 export const bookingService = {
   async getBookings(customerId?: string): Promise<ApiResponse<Booking[]>> {
-    return mockApiCall(bookingsDatabase, 250);
+    const response = await apiGet<{ success: boolean; count: number; bookings: any[] }>('/bookings');
+
+    if (response.success && response.data?.bookings && Array.isArray(response.data.bookings)) {
+      return {
+        success: true,
+        data: response.data.bookings.map(adaptBackendBookingToMobile),
+        message: `Loaded ${response.data.bookings.length} bookings`,
+      };
+    }
+
+    console.warn('[bookingService.getBookings] Live API unreachable. Falling back to mock.');
+    return mockBookingService.getBookings(customerId);
   },
 
   async getBookingById(bookingId: string): Promise<ApiResponse<Booking>> {
-    const booking = bookingsDatabase.find(b => b.id === bookingId);
-    if (!booking) {
-      return { success: false, error: 'Booking not found' };
+    const response = await apiGet<{ success: boolean; booking: any }>(`/bookings/${bookingId}`);
+
+    if (response.success && response.data?.booking) {
+      return {
+        success: true,
+        data: adaptBackendBookingToMobile(response.data.booking),
+      };
     }
-    return mockApiCall(booking, 200);
+
+    console.warn(`[bookingService.getBookingById] Live API failed for ${bookingId}. Using mock.`);
+    return mockBookingService.getBookingById(bookingId);
   },
 
   async createBooking(bookingData: Omit<Booking, 'id' | 'createdAt'>): Promise<ApiResponse<Booking>> {
-    const randomIdSuffix = Math.floor(100000 + Math.random() * 900000);
-    const newBooking: Booking = {
-      ...bookingData,
-      id: `MYR-${randomIdSuffix}`,
-      createdAt: new Date().toISOString(),
+    const payload = {
+      vehicleId: bookingData.vehicleId,
+      startDateTime: bookingData.startDate,
+      endDateTime: bookingData.endDate,
+      durationDays: bookingData.fare.durationDays || 1,
+      pickupType: bookingData.pickupMethod || 'self_pickup',
+      pickupLocation: bookingData.pickupLocation || 'Hazratganj Hub',
+      dropoffLocation: bookingData.dropoffLocation || 'Hazratganj Hub',
     };
-    bookingsDatabase = [newBooking, ...bookingsDatabase];
-    return mockApiCall(newBooking, 400);
+
+    const response = await apiPost<{ success: boolean; booking: any; message?: string }>('/bookings', payload);
+
+    if (response.success && response.data?.booking) {
+      return {
+        success: true,
+        data: adaptBackendBookingToMobile(response.data.booking),
+        message: response.data.message || 'Booking reserved successfully in live database',
+      };
+    }
+
+    console.warn('[bookingService.createBooking] Live API failed. Using mock fallback.');
+    return mockBookingService.createBooking(bookingData);
   },
 
   async cancelBooking(
@@ -37,72 +65,101 @@ export const bookingService = {
     refundAmount?: number,
     hostInformedCustomer?: boolean
   ): Promise<ApiResponse<Booking>> {
-    const index = bookingsDatabase.findIndex(b => b.id === bookingId);
-    if (index === -1) {
-      return { success: false, error: 'Booking not found' };
-    }
-    const currentBooking = bookingsDatabase[index];
-    const calculatedRefund = refundAmount !== undefined ? refundAmount : (refundPercentage === 100 ? currentBooking.fare.totalPayableNow : 0);
-
-    bookingsDatabase[index] = {
-      ...currentBooking,
-      status: 'cancelled',
-      cancellationReason: reason,
-      cancelledAt: new Date().toISOString(),
+    const response = await apiPost<{ success: boolean; booking: any }>(`/bookings/${bookingId}/cancel`, {
+      reason,
       cancelledBy,
       refundPercentage,
-      refundAmount: calculatedRefund,
+      refundAmount,
       hostInformedCustomer,
-      paymentStatus: refundPercentage === 100 ? 'refunded' : currentBooking.paymentStatus,
-    };
-    return mockApiCall(bookingsDatabase[index], 300);
+    });
+
+    if (response.success && response.data?.booking) {
+      return {
+        success: true,
+        data: adaptBackendBookingToMobile(response.data.booking),
+      };
+    }
+
+    console.warn('[bookingService.cancelBooking] Live API failed. Falling back to mock.');
+    return mockBookingService.cancelBooking(
+      bookingId,
+      reason,
+      cancelledBy,
+      refundPercentage,
+      refundAmount,
+      hostInformedCustomer
+    );
   },
 
   async startRideInspection(bookingId: string, inspection: InspectionData): Promise<ApiResponse<Booking>> {
-    const index = bookingsDatabase.findIndex(b => b.id === bookingId);
-    if (index === -1) {
-      return { success: false, error: 'Booking not found' };
-    }
-    bookingsDatabase[index] = {
-      ...bookingsDatabase[index],
-      status: 'active',
-      startInspection: inspection,
+    const payload = {
+      odometerReading: inspection.odometerReading,
+      fuelPercent: inspection.fuelLevelPercentage,
+      photos: inspection.photos,
+      checklist: inspection.checklist,
     };
-    return mockApiCall(bookingsDatabase[index], 350);
+
+    const response = await apiPost<{ success: boolean; booking: any }>(
+      `/bookings/${bookingId}/handover/start`,
+      payload
+    );
+
+    if (response.success && response.data?.booking) {
+      return {
+        success: true,
+        data: adaptBackendBookingToMobile(response.data.booking),
+      };
+    }
+
+    console.warn('[bookingService.startRideInspection] Live API failed. Falling back to mock.');
+    return mockBookingService.startRideInspection(bookingId, inspection);
   },
 
   async endRideInspection(bookingId: string, inspection: InspectionData): Promise<ApiResponse<Booking>> {
-    const index = bookingsDatabase.findIndex(b => b.id === bookingId);
-    if (index === -1) {
-      return { success: false, error: 'Booking not found' };
-    }
-    bookingsDatabase[index] = {
-      ...bookingsDatabase[index],
-      status: 'completed',
-      endInspection: inspection,
+    const payload = {
+      odometerReading: inspection.odometerReading,
+      fuelPercent: inspection.fuelLevelPercentage,
+      photos: inspection.photos,
+      checklist: inspection.checklist,
     };
-    return mockApiCall(bookingsDatabase[index], 350);
+
+    const response = await apiPost<{ success: boolean; booking: any }>(
+      `/bookings/${bookingId}/handover/complete`,
+      payload
+    );
+
+    if (response.success && response.data?.booking) {
+      return {
+        success: true,
+        data: adaptBackendBookingToMobile(response.data.booking),
+      };
+    }
+
+    console.warn('[bookingService.endRideInspection] Live API failed. Falling back to mock.');
+    return mockBookingService.endRideInspection(bookingId, inspection);
   },
 
   async submitReview(reviewData: Omit<Review, 'id' | 'createdAt'>): Promise<ApiResponse<Review>> {
-    const newReview: Review = {
-      ...reviewData,
-      id: 'rev-' + Date.now(),
-      createdAt: new Date().toISOString(),
-    };
-    reviewsDatabase = [newReview, ...reviewsDatabase];
-    
-    // Mark booking as rated
-    const bookingIndex = bookingsDatabase.findIndex(b => b.id === reviewData.bookingId);
-    if (bookingIndex !== -1) {
-      bookingsDatabase[bookingIndex].rated = true;
+    const response = await apiPost<{ success: boolean; review: any }>('/reviews', reviewData);
+    if (response.success && response.data?.review) {
+      return {
+        success: true,
+        data: response.data.review,
+      };
     }
 
-    return mockApiCall(newReview, 300);
+    return mockBookingService.submitReview(reviewData);
   },
 
   async getVehicleReviews(vehicleId: string): Promise<ApiResponse<Review[]>> {
-    const reviews = reviewsDatabase.filter(r => r.vehicleId === vehicleId);
-    return mockApiCall(reviews, 200);
+    const response = await apiGet<{ success: boolean; reviews: Review[] }>(`/vehicles/${vehicleId}/reviews`);
+    if (response.success && response.data?.reviews) {
+      return {
+        success: true,
+        data: response.data.reviews,
+      };
+    }
+
+    return mockBookingService.getVehicleReviews(vehicleId);
   },
 };

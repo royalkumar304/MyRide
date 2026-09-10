@@ -20,6 +20,8 @@ import Header from '../../components/common/Header';
 import { APP_CONFIG } from '../../constants/config';
 import { useAppDispatch, useAppSelector } from '../../store';
 import { addBooking } from '../../store/slices/bookingSlice';
+import { bookingService } from '../../services/bookingService';
+import { paymentService } from '../../services/paymentService';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'BookingFlow'>;
 
@@ -61,14 +63,41 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
     }
   };
 
-  const handleFinalPayment = () => {
+  const handleFinalPayment = async () => {
     setIsProcessingPayment(true);
 
-    setTimeout(() => {
-      setIsProcessingPayment(false);
-      const randomSuffix = Math.floor(100000 + Math.random() * 900000);
-      const newBooking: Booking = {
-        id: `MYR-${randomSuffix}`,
+    try {
+      const res = await bookingService.createBooking({
+        vehicleId: vehicle.id,
+        vehicle,
+        customerId: user?.id || 'usr-cust-1',
+        customerName: user?.fullName || 'Gaurav Mishra',
+        customerPhone: user?.phoneNumber || '+91 99190 77665',
+        hostId: vehicle.hostId,
+        hostName: vehicle.hostName,
+        hostPhone: vehicle.hostPhone || '+91 98765 43210',
+        startDate,
+        endDate,
+        pickupLocation: pickupMethod === 'home_delivery' ? 'Delivered to your address' : `${vehicle.area}, ${vehicle.city}`,
+        dropoffLocation: `${vehicle.area}, ${vehicle.city}`,
+        pickupMethod,
+        status: 'upcoming',
+        fare: {
+          baseRental: rentalSubtotal,
+          durationDays,
+          deliveryFee,
+          myRideServiceFee: myRideFee,
+          discountAmount: 0,
+          securityDeposit,
+          taxes,
+          totalPayableNow,
+        },
+        paymentId: 'pay_rzp_' + Math.random().toString(36).substring(2, 10),
+        paymentStatus: 'completed',
+      });
+
+      const confirmedBooking = res.data || {
+        id: `MYR-${Math.floor(100000 + Math.random() * 900000)}`,
         vehicleId: vehicle.id,
         vehicle,
         customerId: user?.id || 'cust-curr',
@@ -98,9 +127,17 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
         createdAt: new Date().toISOString(),
       };
 
-      dispatch(addBooking(newBooking));
-      navigation.replace('BookingConfirmation', { booking: newBooking });
-    }, 1200);
+      if (confirmedBooking.id) {
+        await paymentService.simulatePayment(confirmedBooking.id).catch(() => {});
+      }
+
+      dispatch(addBooking(confirmedBooking));
+      navigation.replace('BookingConfirmation', { booking: confirmedBooking });
+    } catch (err) {
+      console.warn('[BookingFlowScreen] Error during booking creation:', err);
+    } finally {
+      setIsProcessingPayment(false);
+    }
   };
 
   return (

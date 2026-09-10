@@ -31,14 +31,19 @@ router.post('/auth/login-admin', authController.loginAsAdmin);
 router.get('/vehicles', vehicleController.listVehicles);
 router.get('/vehicles/cities', vehicleController.getSupportedCities);
 router.post('/vehicles/quote', vehicleController.calculateFareQuote);
+router.get('/vehicles/:id/reviews', bookingController.getVehicleReviews);
 router.get('/vehicles/:id', vehicleController.getVehicleById);
 
 // Booking Routes
 router.post('/bookings', authenticateToken, bookingController.createBooking);
 router.get('/bookings', authenticateToken, bookingController.getBookings);
 router.get('/bookings/:id', authenticateToken, bookingController.getBookingById);
+router.post('/bookings/:id/cancel', authenticateToken, bookingController.cancelBooking);
 router.post('/bookings/:id/handover/start', authenticateToken, bookingController.startHandover);
 router.post('/bookings/:id/handover/complete', authenticateToken, bookingController.completeHandover);
+
+// Review Routes
+router.post('/reviews', authenticateToken, bookingController.submitReview);
 
 // Payment Routes (Razorpay)
 router.post('/payments/create-order', authenticateToken, paymentController.createPaymentOrder);

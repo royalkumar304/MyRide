@@ -1,90 +1,170 @@
 import { Vehicle, VehicleFilterParams } from '../types';
-import { MOCK_VEHICLES } from './mockData';
-import { mockApiCall, ApiResponse } from './api';
-
-let vehiclesDatabase = [...MOCK_VEHICLES];
+import { apiGet, apiPost, ApiResponse, adaptBackendVehicleToMobile } from './api';
+import { mockVehicleService } from './mock/mockVehicleService';
 
 export const vehicleService = {
   async getVehicles(params?: VehicleFilterParams): Promise<ApiResponse<Vehicle[]>> {
-    let filtered = [...vehiclesDatabase];
+    const queryParts: string[] = [];
 
     if (params) {
+      if (params.city && params.city !== 'All Cities') {
+        queryParts.push(`city=${encodeURIComponent(params.city)}`);
+      }
       if (params.category && params.category !== 'all') {
-        filtered = filtered.filter(v => v.category === params.category);
-      }
-      if (params.city) {
-        filtered = filtered.filter(v => v.city.toLowerCase() === params.city?.toLowerCase());
-      }
-      if (params.searchQuery) {
-        const q = params.searchQuery.toLowerCase();
-        filtered = filtered.filter(v => 
-          v.name.toLowerCase().includes(q) || 
-          v.brand.toLowerCase().includes(q) || 
-          v.area.toLowerCase().includes(q) ||
-          v.city.toLowerCase().includes(q)
-        );
+        queryParts.push(`vehicleType=${encodeURIComponent(params.category.toUpperCase())}`);
       }
       if (params.minPrice) {
-        filtered = filtered.filter(v => v.pricePerDay >= (params.minPrice || 0));
+        queryParts.push(`minPrice=${encodeURIComponent(params.minPrice.toString())}`);
       }
       if (params.maxPrice) {
-        filtered = filtered.filter(v => v.pricePerDay <= (params.maxPrice || 99999));
+        queryParts.push(`maxPrice=${encodeURIComponent(params.maxPrice.toString())}`);
       }
-      if (params.fuelTypes && params.fuelTypes.length > 0) {
-        filtered = filtered.filter(v => params.fuelTypes?.includes(v.fuelType));
+      if (params.fuelTypes && params.fuelTypes.length === 1) {
+        queryParts.push(`fuelType=${encodeURIComponent(params.fuelTypes[0])}`);
       }
-      if (params.transmissions && params.transmissions.length > 0) {
-        filtered = filtered.filter(v => params.transmissions?.includes(v.transmission));
+      if (params.transmissions && params.transmissions.length === 1) {
+        queryParts.push(`transmission=${encodeURIComponent(params.transmissions[0])}`);
       }
-      if (params.deliveryOnly) {
-        filtered = filtered.filter(v => v.deliveryAvailable);
-      }
-      if (params.instantBookingOnly) {
-        filtered = filtered.filter(v => v.instantBooking);
-      }
-      if (params.verifiedOnly) {
-        filtered = filtered.filter(v => v.isHostVerified);
-      }
-
-      // Sort
-      if (params.sortBy === 'price_asc') {
-        filtered.sort((a, b) => a.pricePerDay - b.pricePerDay);
-      } else if (params.sortBy === 'price_desc') {
-        filtered.sort((a, b) => b.pricePerDay - a.pricePerDay);
-      } else if (params.sortBy === 'rating') {
-        filtered.sort((a, b) => b.rating - a.rating);
-      } else if (params.sortBy === 'nearest') {
-        filtered.sort((a, b) => (a.distanceKm || 0) - (b.distanceKm || 0));
-      } else if (params.sortBy === 'popularity') {
-        filtered.sort((a, b) => b.tripsCount - a.tripsCount);
+      if (params.sortBy) {
+        queryParts.push(`sortBy=${encodeURIComponent(params.sortBy)}`);
       }
     }
 
-    return mockApiCall(filtered, 300);
+    const queryString = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
+    const response = await apiGet<{ success: boolean; count: number; vehicles: any[] }>(`/vehicles${queryString}`);
+
+    if (response.success && response.data?.vehicles && Array.isArray(response.data.vehicles)) {
+      let list = response.data.vehicles.map(adaptBackendVehicleToMobile);
+
+      // Client-side text search & multi-select refinements
+      if (params?.searchQuery) {
+        const q = params.searchQuery.toLowerCase();
+        list = list.filter(
+          (v) =>
+            v.name.toLowerCase().includes(q) ||
+            v.brand.toLowerCase().includes(q) ||
+            v.area.toLowerCase().includes(q) ||
+            v.city.toLowerCase().includes(q)
+        );
+      }
+      if (params?.deliveryOnly) {
+        list = list.filter((v) => v.deliveryAvailable);
+      }
+      if (params?.instantBookingOnly) {
+        list = list.filter((v) => v.instantBooking);
+      }
+      if (params?.verifiedOnly) {
+        list = list.filter((v) => v.isHostVerified);
+      }
+
+      return {
+        success: true,
+        data: list,
+        message: `Fetched ${list.length} vehicles from live backend`,
+      };
+    }
+
+    console.warn('[vehicleService.getVehicles] Live API unreachable or empty. Using mockVehicleService.');
+    return mockVehicleService.getVehicles(params);
   },
 
   async getVehicleById(id: string): Promise<ApiResponse<Vehicle>> {
-    const found = vehiclesDatabase.find(v => v.id === id);
-    if (!found) {
-      return { success: false, error: 'Vehicle not found' };
+    const response = await apiGet<{ success: boolean; vehicle: any }>(`/vehicles/${id}`);
+    if (response.success && response.data?.vehicle) {
+      return {
+        success: true,
+        data: adaptBackendVehicleToMobile(response.data.vehicle),
+      };
     }
-    return mockApiCall(found, 200);
+
+    console.warn(`[vehicleService.getVehicleById] Live API failed for vehicle ${id}. Using mock fallback.`);
+    return mockVehicleService.getVehicleById(id);
   },
 
-  async addVehicle(vehicleData: Omit<Vehicle, 'id' | 'createdAt' | 'tripsCount' | 'rating'>): Promise<ApiResponse<Vehicle>> {
-    const newVehicle: Vehicle = {
-      ...vehicleData,
-      id: 'veh-' + Date.now(),
-      rating: 5.0,
-      tripsCount: 0,
-      createdAt: new Date().toISOString(),
+  async calculateFareQuote(payload: {
+    vehicleId: string;
+    startDateTime: string;
+    endDateTime: string;
+    pickupType?: 'self_pickup' | 'home_delivery';
+    discountAmount?: number;
+  }): Promise<ApiResponse<{ durationHours: number; durationDays: number; breakdown: any }>> {
+    const response = await apiPost<{
+      success: boolean;
+      durationHours: number;
+      durationDays: number;
+      breakdown: any;
+    }>('/vehicles/quote', payload);
+
+    if (response.success && response.data) {
+      return {
+        success: true,
+        data: response.data,
+      };
+    }
+
+    return {
+      success: false,
+      message: response.message || 'Failed to calculate quote from server',
     };
-    vehiclesDatabase = [newVehicle, ...vehiclesDatabase];
-    return mockApiCall(newVehicle, 400);
+  },
+
+  async getSupportedCities(): Promise<ApiResponse<string[]>> {
+    const response = await apiGet<{ success: boolean; cities: string[] }>('/vehicles/cities');
+    if (response.success && response.data?.cities) {
+      return {
+        success: true,
+        data: response.data.cities,
+      };
+    }
+    return {
+      success: true,
+      data: ['Lucknow', 'Jaipur', 'Indore', 'Bhopal', 'Patna', 'Agra', 'Varanasi', 'Kanpur'],
+    };
   },
 
   async getHostVehicles(hostId: string): Promise<ApiResponse<Vehicle[]>> {
-    const hostVehicles = vehiclesDatabase.filter(v => v.hostId === hostId || v.hostId === 'host-101');
-    return mockApiCall(hostVehicles, 250);
+    const response = await apiGet<{ success: boolean; vehicles: any[] }>('/host/vehicles');
+    if (response.success && response.data?.vehicles && Array.isArray(response.data.vehicles)) {
+      return {
+        success: true,
+        data: response.data.vehicles.map(adaptBackendVehicleToMobile),
+      };
+    }
+
+    console.warn('[vehicleService.getHostVehicles] Live API unreachable. Falling back to mock.');
+    return mockVehicleService.getHostVehicles(hostId);
+  },
+
+  async addVehicle(vehicleData: Omit<Vehicle, 'id' | 'createdAt' | 'tripsCount' | 'rating'>): Promise<ApiResponse<Vehicle>> {
+    const payload = {
+      type: vehicleData.category.toUpperCase(),
+      brand: vehicleData.brand,
+      model: vehicleData.model,
+      variant: vehicleData.variant || '',
+      year: vehicleData.year,
+      registrationNumber: vehicleData.registrationNumber,
+      fuelType: vehicleData.fuelType,
+      transmission: vehicleData.transmission,
+      seats: vehicleData.seatingCapacity,
+      dailyRate: vehicleData.pricePerDay,
+      securityDeposit: vehicleData.securityDeposit,
+      deliveryFee: vehicleData.deliveryFee || 150,
+      city: vehicleData.city,
+      area: vehicleData.area,
+      images: vehicleData.images,
+      features: vehicleData.features,
+    };
+
+    const response = await apiPost<{ success: boolean; vehicle: any }>('/host/vehicles', payload);
+    if (response.success && response.data?.vehicle) {
+      return {
+        success: true,
+        data: adaptBackendVehicleToMobile(response.data.vehicle),
+        message: 'Vehicle added successfully and submitted for verification',
+      };
+    }
+
+    console.warn('[vehicleService.addVehicle] Live API failed. Falling back to mock.');
+    return mockVehicleService.addVehicle(vehicleData);
   },
 };
