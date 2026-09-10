@@ -1,0 +1,161 @@
+import { Request, Response, NextFunction } from 'express';
+import { isUsingMemoryStore } from '../config/db';
+import { memoryStore } from '../config/store';
+import VehicleModel from '../models/Vehicle';
+import { calculateBookingPrice } from '../services/pricingEngine';
+import { TIER2_TIER3_CITIES } from '@myride/constants';
+import { VehicleSearchQuerySchema } from '@myride/validation';
+import { VehicleType } from '@myride/types';
+
+export async function listVehicles(req: Request, res: Response, next: NextFunction) {
+  try {
+    const query = VehicleSearchQuerySchema.parse(req.query);
+    const { city, vehicleType, transmission, fuelType, minPrice, maxPrice, sortBy = 'popular' } = query;
+
+    let vehicles: any[] = [];
+    if (isUsingMemoryStore()) {
+      vehicles = memoryStore.vehicles.filter((v) => {
+        if (v.verificationStatus !== 'APPROVED') return false;
+        if (city && v.location.city.toLowerCase() !== city.toLowerCase()) return false;
+        if (vehicleType && v.type.toLowerCase() !== vehicleType.toLowerCase()) return false;
+        if (transmission && v.transmission.toLowerCase() !== transmission.toLowerCase()) return false;
+        if (fuelType && v.fuelType.toLowerCase() !== fuelType.toLowerCase()) return false;
+        if (minPrice && v.pricing.dailyRate < minPrice) return false;
+        if (maxPrice && v.pricing.dailyRate > maxPrice) return false;
+        return true;
+      });
+
+      if (sortBy === 'price_asc') {
+        vehicles.sort((a, b) => a.pricing.dailyRate - b.pricing.dailyRate);
+      } else if (sortBy === 'price_desc') {
+        vehicles.sort((a, b) => b.pricing.dailyRate - a.pricing.dailyRate);
+      } else if (sortBy === 'rating') {
+        vehicles.sort((a, b) => (b.rating || 0) - (a.rating || 0));
+      }
+    } else {
+      const filter: any = { verificationStatus: 'APPROVED' };
+      if (city) filter['location.city'] = new RegExp(`^${city}$`, 'i');
+      if (vehicleType) filter.type = vehicleType.toUpperCase();
+      if (transmission) filter.transmission = transmission;
+      if (fuelType) filter.fuelType = fuelType;
+      if (minPrice || maxPrice) {
+        filter['pricing.dailyRate'] = {};
+        if (minPrice) filter['pricing.dailyRate'].$gte = minPrice;
+        if (maxPrice) filter['pricing.dailyRate'].$lte = maxPrice;
+      }
+
+      let queryBuilder = VehicleModel.find(filter);
+      if (sortBy === 'price_asc') queryBuilder = queryBuilder.sort({ 'pricing.dailyRate': 1 });
+      else if (sortBy === 'price_desc') queryBuilder = queryBuilder.sort({ 'pricing.dailyRate': -1 });
+      else if (sortBy === 'rating') queryBuilder = queryBuilder.sort({ rating: -1 });
+      else queryBuilder = queryBuilder.sort({ createdAt: -1 });
+
+      vehicles = await queryBuilder.exec();
+    }
+
+    res.json({
+      success: true,
+      count: vehicles.length,
+      vehicles,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getVehicleById(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { id } = req.params;
+    let vehicle: any = null;
+
+    if (isUsingMemoryStore()) {
+      vehicle = memoryStore.vehicles.find((v) => v._id === id);
+    } else {
+      vehicle = await VehicleModel.findById(id).populate('ownerId', 'name phone rating kycStatus');
+    }
+
+    if (!vehicle) {
+      res.status(404).json({ success: false, message: 'Vehicle not found' });
+      return;
+    }
+
+    // Host details
+    let host: any = null;
+    const hostIdStr = typeof vehicle.ownerId === 'object' ? vehicle.ownerId._id : vehicle.ownerId;
+    if (isUsingMemoryStore()) {
+      host = memoryStore.users.find((u) => u._id === hostIdStr);
+    }
+
+    res.json({
+      success: true,
+      vehicle: {
+        ...vehicle,
+        host: host
+          ? {
+              id: host._id,
+              name: host.name,
+              kycStatus: host.kycStatus,
+              rating: host.rating || 4.9,
+            }
+          : vehicle.ownerId,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function calculateFareQuote(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { vehicleId, startDateTime, endDateTime, pickupType = 'self_pickup', discountAmount = 0 } = req.body;
+
+    if (!vehicleId || !startDateTime || !endDateTime) {
+      res.status(400).json({ success: false, message: 'vehicleId, startDateTime, and endDateTime are required' });
+      return;
+    }
+
+    let vehicle: any = null;
+    if (isUsingMemoryStore()) {
+      vehicle = memoryStore.vehicles.find((v) => v._id === vehicleId);
+    } else {
+      vehicle = await VehicleModel.findById(vehicleId);
+    }
+
+    if (!vehicle) {
+      res.status(404).json({ success: false, message: 'Vehicle not found' });
+      return;
+    }
+
+    const start = new Date(startDateTime).getTime();
+    const end = new Date(endDateTime).getTime();
+    const durationHours = Math.max(1, Math.ceil((end - start) / (1000 * 60 * 60)));
+    const durationDays = Math.max(1, Math.ceil(durationHours / 24));
+
+    const vType = (vehicle.type || 'CAR').toUpperCase() as VehicleType;
+
+    const breakdown = await calculateBookingPrice({
+      dailyRate: vehicle.pricing.dailyRate,
+      durationDays,
+      vehicleType: vType,
+      pickupType: pickupType as any,
+      discountAmount: Number(discountAmount) || 0,
+      securityDeposit: vehicle.pricing.securityDeposit || 2000,
+    });
+
+    res.json({
+      success: true,
+      durationHours,
+      durationDays,
+      breakdown,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getSupportedCities(req: Request, res: Response) {
+  res.json({
+    success: true,
+    cities: TIER2_TIER3_CITIES,
+  });
+}

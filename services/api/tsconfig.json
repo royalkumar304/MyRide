@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "commonjs",
+    "lib": ["es2022"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "outDir": "./dist",
+    "baseUrl": ".",
+    "paths": {
+      "@myride/types": ["../../packages/types/src"],
+      "@myride/constants": ["../../packages/constants/src"],
+      "@myride/utils": ["../../packages/utils/src"],
+      "@myride/validation": ["../../packages/validation/src"]
+    }
+  },
+  "include": ["src/**/*"]
+}
