@@ -36,7 +36,14 @@ yarn-error.*
 .env
 .env*.local
 .env.*
+services/api/.env
+services/api/.env.*
+apps/*/.env
+apps/*/.env.*
+**/.env
+**/.env.*
 !.env.example
+!**/.env.example
 
 # typescript
 *.tsbuildinfo

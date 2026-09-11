@@ -111,7 +111,7 @@ REDIS_URL=redis://localhost:6379
 USE_MEMORY_STORE=false
 
 # Authentication Secret (Strictly Backend)
-JWT_SECRET=myride_super_secure_jwt_signing_secret_2026
+JWT_SECRET=CHANGE_ME_TO_A_LONG_RANDOM_SECRET
 JWT_EXPIRES_IN=7d
 EXPOSE_DEV_OTP=true
 

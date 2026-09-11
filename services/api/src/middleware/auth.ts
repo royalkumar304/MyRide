@@ -14,15 +14,6 @@ export interface AuthRequest extends Request {
 export const authenticateJwt = (req: AuthRequest, res: Response, next: NextFunction): void => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    if (process.env.NODE_ENV !== 'production') {
-      req.user = {
-        userId: '6a9e4e50b4a29f4bdb7b6898',
-        email: 'rahul@example.com',
-        role: 'CUSTOMER',
-        name: 'Rahul Sharma',
-      };
-      return next();
-    }
     res.status(401).json({ success: false, message: 'Authorization token required' });
     return;
   }
@@ -34,15 +25,6 @@ export const authenticateJwt = (req: AuthRequest, res: Response, next: NextFunct
     req.user = decoded;
     next();
   } catch (error) {
-    if (process.env.NODE_ENV !== 'production') {
-      req.user = {
-        userId: '6a9e4e50b4a29f4bdb7b6898',
-        email: 'rahul@example.com',
-        role: 'CUSTOMER',
-        name: 'Rahul Sharma',
-      };
-      return next();
-    }
     res.status(401).json({ success: false, message: 'Invalid or expired authorization token' });
   }
 };
