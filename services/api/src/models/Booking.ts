@@ -27,7 +27,14 @@ export interface IBookingDoc extends Document {
     totalAmount: number;
     hostEarnings: number;
   };
-  paymentStatus: 'pending' | 'completed' | 'failed' | 'refunded';
+  paymentStatus:
+    | 'pending'
+    | 'processing'
+    | 'paid'
+    | 'completed'
+    | 'failed'
+    | 'refunded'
+    | 'cancelled';
   bookingStatus:
     | 'CREATED'
     | 'PAYMENT_PENDING'
@@ -39,6 +46,9 @@ export interface IBookingDoc extends Document {
     | 'COMPLETED'
     | 'CANCELLED'
     | 'REFUNDED';
+  razorpayOrderId?: string;
+  razorpayPaymentId?: string;
+  paidAt?: Date;
   startInspection?: {
     odometerReading: number;
     fuelLevelPercentage: number;
@@ -91,7 +101,7 @@ const BookingSchema = new Schema<IBookingDoc>(
     },
     paymentStatus: {
       type: String,
-      enum: ['pending', 'completed', 'failed', 'refunded'],
+      enum: ['pending', 'processing', 'paid', 'completed', 'failed', 'refunded', 'cancelled'],
       default: 'pending',
     },
     bookingStatus: {
@@ -111,6 +121,9 @@ const BookingSchema = new Schema<IBookingDoc>(
       default: 'UPCOMING',
       index: true,
     },
+    razorpayOrderId: { type: String, index: true, sparse: true },
+    razorpayPaymentId: { type: String, index: true, sparse: true },
+    paidAt: { type: Date },
     startInspection: { type: Object },
     endInspection: { type: Object },
     cancellationReason: { type: String },

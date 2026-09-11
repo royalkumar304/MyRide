@@ -161,8 +161,11 @@ export interface IBooking {
   pickupLocation: string;
   dropoffLocation: string;
   pricing: IBookingPricing;
-  paymentStatus: 'pending' | 'completed' | 'failed' | 'refunded';
+  paymentStatus: 'pending' | 'processing' | 'paid' | 'completed' | 'failed' | 'refunded' | 'cancelled';
   bookingStatus: BookingStatus;
+  razorpayOrderId?: string;
+  razorpayPaymentId?: string;
+  paidAt?: string;
   startInspection?: IInspectionData;
   endInspection?: IInspectionData;
   cancellationReason?: string;
@@ -182,7 +185,7 @@ export interface IPayment {
   amountPaise: number;
   currency: string;
   method: 'upi' | 'card' | 'netbanking' | 'wallet';
-  status: 'captured' | 'failed' | 'refunded';
+  status: 'captured' | 'failed' | 'refunded' | 'pending';
   createdAt: string;
 }
 

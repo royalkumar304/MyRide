@@ -24,6 +24,8 @@ import { useAppDispatch, useAppSelector } from '../../store';
 import { addBooking } from '../../store/slices/bookingSlice';
 import { bookingService } from '../../services/bookingService';
 import { vehicleService } from '../../services/vehicleService';
+import { paymentService } from '../../services/paymentService';
+import { openRazorpayCheckout } from '../../services/razorpayCheckout';
 import { logger } from '../../utils/logger';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'BookingFlow'>;
@@ -135,9 +137,7 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
     setIsProcessingPayment(true);
 
     try {
-      // 1. Create booking on live backend API
-      // Server-side pricing: The backend calculates final base amount, platform commission,
-      // taxes, security deposit, and totalAmount server-side from database configuration
+      // 1. Create booking reservation on live backend API with status PAYMENT_PENDING
       const res = await bookingService.createBooking({
         vehicleId: vehicle.id,
         vehicle,
@@ -152,7 +152,7 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
         pickupLocation: pickupMethod === 'home_delivery' ? 'Delivered to your address' : `${vehicle.area}, ${vehicle.city}`,
         dropoffLocation: `${vehicle.area}, ${vehicle.city}`,
         pickupMethod,
-        status: 'upcoming',
+        status: 'pending',
         pricing: {
           baseAmount: rentalSubtotal,
           durationDays,
@@ -166,7 +166,6 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
           hostEarnings: rentalSubtotal - myRideFee,
         },
         fare: {
-          // Frontend estimates - backend definitively recalculates and enforces server pricing
           baseRental: rentalSubtotal,
           durationDays,
           deliveryFee,
@@ -184,25 +183,114 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
         return;
       }
 
-      // 2. The final booking amount and canonical ID MUST strictly come from the backend
-      const confirmedBooking = res.data;
-      const backendFare = confirmedBooking.fare;
+      const reservedBooking = res.data;
+      dispatch(addBooking(reservedBooking));
 
-      logger.debug('[BookingFlowScreen] Final server-authorized pricing applied:', {
-        bookingId: confirmedBooking.id,
-        serverBaseAmount: confirmedBooking.pricing?.baseAmount,
-        serverCommission: confirmedBooking.pricing?.commissionAmount,
-        serverTaxes: confirmedBooking.pricing?.taxes,
-        serverDeposit: confirmedBooking.pricing?.securityDeposit,
-        serverTotalAmount: confirmedBooking.pricing?.totalAmount,
+      // 2. Fetch authoritative Razorpay Order from backend API: POST /payments/create-order
+      const orderRes = await paymentService.createRazorpayOrder(reservedBooking.id);
+
+      if (!orderRes.success || !orderRes.data) {
+        Alert.alert(
+          'Payment Gateway Notice',
+          orderRes.message || 'Unable to create Razorpay payment order. Your booking remains in PAYMENT_PENDING. You can complete payment later from your Bookings tab.',
+          [
+            {
+              text: 'View Booking',
+              onPress: () => navigation.replace('BookingDetails', { bookingId: reservedBooking.id }),
+            },
+            {
+              text: 'OK',
+              style: 'cancel',
+            },
+          ]
+        );
+        return;
+      }
+
+      const orderData = orderRes.data;
+
+      // 3. Open Razorpay Checkout SDK
+      const checkoutRes = await openRazorpayCheckout({
+        keyId: orderData.keyId,
+        orderId: orderData.orderId,
+        amount: orderData.amount,
+        currency: orderData.currency,
+        name: 'MyRide Mobility',
+        description: `Booking #${reservedBooking.id} • ${vehicle.name}`,
+        prefill: {
+          name: user?.fullName || 'Rahul Sharma',
+          contact: user?.phoneNumber || '+91 98765 43210',
+          email: user?.email || 'customer@myride.in',
+        },
       });
 
-      // Populate Redux strictly with the backend-confirmed booking
+      if (!checkoutRes.success) {
+        const error = checkoutRes.error;
+        if (error.code === 'CANCELLED') {
+          Alert.alert(
+            'Payment Cancelled',
+            'Your payment was cancelled. Your booking has been reserved in PAYMENT_PENDING. You can retry paying for it anytime from your booking details.',
+            [
+              {
+                text: 'Go to Booking Details',
+                onPress: () => navigation.replace('BookingDetails', { bookingId: reservedBooking.id }),
+              },
+              { text: 'Stay Here', style: 'cancel' },
+            ]
+          );
+        } else if (error.code === 'NATIVE_MODULE_UNAVAILABLE') {
+          Alert.alert(
+            'Development Notice',
+            error.message + '\n\nYour booking is saved with status PAYMENT_PENDING. You can verify and test payment via the backend test suite.',
+            [
+              {
+                text: 'View Booking',
+                onPress: () => navigation.replace('BookingDetails', { bookingId: reservedBooking.id }),
+              },
+            ]
+          );
+        } else {
+          Alert.alert(
+            'Payment Failed',
+            error.message || 'Transaction could not be completed. Your booking remains in PAYMENT_PENDING.',
+            [
+              {
+                text: 'View Booking',
+                onPress: () => navigation.replace('BookingDetails', { bookingId: reservedBooking.id }),
+              },
+              { text: 'OK', style: 'cancel' },
+            ]
+          );
+        }
+        return;
+      }
+
+      // 4. Submit signature cryptographically to backend server: POST /payments/verify
+      const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = checkoutRes.data;
+
+      const verifyRes = await paymentService.verifyPayment({
+        bookingId: reservedBooking.id,
+        razorpayOrderId: razorpay_order_id,
+        razorpayPaymentId: razorpay_payment_id,
+        razorpaySignature: razorpay_signature,
+        paymentMethod,
+      });
+
+      if (!verifyRes.success || !verifyRes.data?.booking) {
+        Alert.alert(
+          'Verification Failed',
+          verifyRes.message || 'Payment signature could not be verified by the server. Please contact support with Payment ID: ' + razorpay_payment_id
+        );
+        return;
+      }
+
+      // 5. Success! Server confirmed booking
+      const confirmedBooking = verifyRes.data.booking;
       dispatch(addBooking(confirmedBooking));
       navigation.replace('BookingConfirmation', { booking: confirmedBooking });
     } catch (err: any) {
-      logger.warn('[BookingFlowScreen] Error during booking creation:', err);
-      Alert.alert('Booking Error', err.message || 'Network error occurred while reserving your vehicle.');
+      logger.warn('[BookingFlowScreen] Error during payment flow:', err);
+      Alert.alert('Payment Error', err.message || 'An unexpected error occurred during payment processing.');
     } finally {
       setIsProcessingPayment(false);
     }

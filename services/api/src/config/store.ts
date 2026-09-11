@@ -9,6 +9,7 @@ export interface InMemoryDb {
   earnings: IHostEarning[];
   reviews?: any[];
   auditLogs: any[];
+  payments: any[];
 }
 
 export const memoryStore: InMemoryDb = {
@@ -419,4 +420,5 @@ export const memoryStore: InMemoryDb = {
       timestamp: new Date().toISOString(),
     },
   ],
+  payments: [],
 };

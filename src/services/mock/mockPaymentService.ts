@@ -1,43 +1,24 @@
-import { PaymentTransaction, PaymentMethodType } from '../../types';
-import { APP_CONFIG } from '../../constants/config';
-import { mockApiCall, ApiResponse } from '../api';
+import { ApiResponse } from '../api';
+import { PaymentTransaction } from '../../types';
 
+/**
+ * Mock payments have been strictly disabled in Phase 2 production Razorpay integration.
+ * Insecure client-side Math.random() order/payment generation is prohibited.
+ */
 export const mockPaymentService = {
-  async createRazorpayOrder(amountInInr: number, receiptId: string): Promise<ApiResponse<{
-    orderId: string;
-    amount: number;
-    currency: string;
-    keyId: string;
-  }>> {
-    const orderId = 'order_rzp_' + Math.random().toString(36).substring(2, 12);
-    return mockApiCall({
-      orderId,
-      amount: amountInInr * 100, // paise
-      currency: 'INR',
-      keyId: APP_CONFIG.razorpayKeyId,
-    }, 300);
+  async createRazorpayOrder(_amountInInr: number, _receiptId: string): Promise<ApiResponse<any>> {
+    return {
+      success: false,
+      message: '[Security Policy] Client mock payments are prohibited. Real Razorpay server order is required.',
+      error: 'MOCK_PAYMENT_PROHIBITED',
+    };
   },
 
-  async verifyPaymentSignature(paymentDetails: {
-    bookingId: string;
-    razorpayOrderId: string;
-    razorpayPaymentId: string;
-    razorpaySignature: string;
-    amount: number;
-    method: PaymentMethodType;
-  }): Promise<ApiResponse<PaymentTransaction>> {
-    const transaction: PaymentTransaction = {
-      id: 'tx-' + Date.now(),
-      bookingId: paymentDetails.bookingId,
-      razorpayOrderId: paymentDetails.razorpayOrderId,
-      razorpayPaymentId: paymentDetails.razorpayPaymentId,
-      razorpaySignature: paymentDetails.razorpaySignature,
-      amount: paymentDetails.amount,
-      currency: 'INR',
-      method: paymentDetails.method,
-      status: 'captured',
-      createdAt: new Date().toISOString(),
+  async verifyPaymentSignature(_paymentDetails: any): Promise<ApiResponse<PaymentTransaction>> {
+    return {
+      success: false,
+      message: '[Security Policy] Client mock signature verification is prohibited. Server HMAC verification required.',
+      error: 'MOCK_VERIFICATION_PROHIBITED',
     };
-    return mockApiCall(transaction, 400);
   },
 };

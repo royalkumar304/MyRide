@@ -56,13 +56,12 @@ export const CreateBookingSchema = z.object({
   discountCode: z.string().optional(),
 });
 
-// Payment Verification Validation
 export const VerifyPaymentSchema = z.object({
-  bookingId: z.string(),
-  razorpayOrderId: z.string(),
-  razorpayPaymentId: z.string(),
-  razorpaySignature: z.string(),
-  paymentMethod: z.enum(['upi', 'card', 'netbanking', 'wallet']),
+  bookingId: z.string().min(1, 'Booking ID is required'),
+  razorpayOrderId: z.string().min(1, 'Razorpay order ID is required'),
+  razorpayPaymentId: z.string().min(1, 'Razorpay payment ID is required'),
+  razorpaySignature: z.string().min(1, 'Razorpay signature is required'),
+  paymentMethod: z.enum(['upi', 'card', 'netbanking', 'wallet']).default('upi').optional(),
 });
 
 // Settings & Commission Validation

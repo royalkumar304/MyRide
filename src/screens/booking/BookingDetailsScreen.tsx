@@ -33,6 +33,8 @@ import {
   fetchBookings,
 } from '../../store/slices/bookingSlice';
 import { bookingService } from '../../services/bookingService';
+import { paymentService } from '../../services/paymentService';
+import { openRazorpayCheckout } from '../../services/razorpayCheckout';
 import { calculateCancellationRefund } from '../../utils/cancellationPolicy';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'BookingDetails'>;
@@ -61,7 +63,72 @@ export const BookingDetailsScreen: React.FC<Props> = ({ navigation, route }) => 
   // Cancellation Modal state
   const [isCancelModalVisible, setIsCancelModalVisible] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
+  const [isRetryingPayment, setIsRetryingPayment] = useState(false);
   const [selectedReason, setSelectedReason] = useState(CANCELLATION_REASONS[0]);
+
+  const isPaymentPending =
+    booking &&
+    (booking.status === 'pending' ||
+      booking.paymentStatus === 'pending' ||
+      booking.paymentStatus === 'failed') &&
+    booking.status !== 'cancelled' &&
+    booking.status !== 'completed';
+
+  const handleRetryPayment = async () => {
+    if (!booking) return;
+    setIsRetryingPayment(true);
+
+    try {
+      const orderRes = await paymentService.createRazorpayOrder(booking.id);
+      if (!orderRes.success || !orderRes.data) {
+        Alert.alert(
+          'Payment Order Error',
+          orderRes.message || 'Unable to initialize Razorpay payment order on server.'
+        );
+        return;
+      }
+
+      const orderData = orderRes.data;
+      const checkoutRes = await openRazorpayCheckout({
+        keyId: orderData.keyId,
+        orderId: orderData.orderId,
+        amount: orderData.amount,
+        currency: orderData.currency,
+        name: 'MyRide Mobility',
+        description: `Booking #${booking.id} • ${booking.vehicle?.name}`,
+      });
+
+      if (!checkoutRes.success) {
+        if (checkoutRes.error.code === 'CANCELLED') {
+          Alert.alert('Payment Cancelled', 'Payment was cancelled. You can retry paying whenever you are ready.');
+        } else {
+          Alert.alert('Payment Failed', checkoutRes.error.message);
+        }
+        return;
+      }
+
+      const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = checkoutRes.data;
+      const verifyRes = await paymentService.verifyPayment({
+        bookingId: booking.id,
+        razorpayOrderId: razorpay_order_id,
+        razorpayPaymentId: razorpay_payment_id,
+        razorpaySignature: razorpay_signature,
+        paymentMethod: 'upi',
+      });
+
+      if (verifyRes.success) {
+        dispatch(fetchBookingById(booking.id));
+        dispatch(fetchBookings(undefined));
+        Alert.alert('Payment Confirmed 🎉', 'Your payment was verified and booking is now confirmed!');
+      } else {
+        Alert.alert('Verification Notice', verifyRes.message || 'Payment signature could not be verified on server.');
+      }
+    } catch (err: any) {
+      Alert.alert('Payment Error', err.message || 'An error occurred during payment processing.');
+    } finally {
+      setIsRetryingPayment(false);
+    }
+  };
 
   // Compute live cancellation refund status
   const refundCalc = calculateCancellationRefund(
@@ -417,6 +484,19 @@ export const BookingDetailsScreen: React.FC<Props> = ({ navigation, route }) => 
             <Text style={styles.totalValue}>₹{booking.fare.totalPayableNow}</Text>
           </View>
         </View>
+
+        {/* Payment Pending / Retry Payment Action */}
+        {isPaymentPending && (
+          <Button
+            title={isRetryingPayment ? 'Connecting to Razorpay...' : 'Pay Now / Complete Payment'}
+            onPress={handleRetryPayment}
+            variant="primary"
+            size="lg"
+            disabled={isRetryingPayment}
+            icon={<Ionicons name="card-outline" size={20} color={colors.surface} />}
+            style={styles.primaryActionBtn}
+          />
+        )}
 
         {/* Ride Actions: Digital Pickup / Return */}
         {booking.status === 'upcoming' && (

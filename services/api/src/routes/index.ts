@@ -55,7 +55,6 @@ router.post('/reviews', authenticateToken, bookingController.submitReview);
 // Payment Routes (Razorpay)
 router.post('/payments/create-order', authenticateToken, paymentController.createPaymentOrder);
 router.post('/payments/verify', authenticateToken, paymentController.verifyPayment);
-router.post('/payments/simulate', authenticateToken, paymentController.simulatePayment);
 
 // Host Routes
 router.get('/host/dashboard', authenticateToken, hostController.getHostDashboard);

@@ -12,7 +12,7 @@ export const ENV = {
   REDIS_URL: process.env.REDIS_URL || 'redis://localhost:6379',
   JWT_SECRET: process.env.JWT_SECRET || 'dev_local_fallback_secret_change_in_env',
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '7d',
-  RAZORPAY_KEY_ID: process.env.RAZORPAY_KEY_ID || 'rzp_test_MyRide2026',
+  RAZORPAY_KEY_ID: process.env.RAZORPAY_KEY_ID || '',
   RAZORPAY_KEY_SECRET: process.env.RAZORPAY_KEY_SECRET || '',
   CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME || 'myride-assets',
   GOOGLE_MAPS_API_KEY: process.env.GOOGLE_MAPS_API_KEY || '',
