@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+
 export interface CategoryCommission {
   car: number;
   bike: number;
@@ -36,7 +38,7 @@ export const APP_CONFIG = {
   referredUserDiscount: 150,
 
   // Client-safe environment configuration
-  apiBaseUrl: process.env.EXPO_PUBLIC_API_URL || process.env.API_BASE_URL || 'http://localhost:5000/api/v1',
+  apiBaseUrl: process.env.EXPO_PUBLIC_API_URL || process.env.API_BASE_URL || (Platform.OS === 'android' ? 'http://10.0.2.2:5000/api/v1' : 'http://localhost:5000/api/v1'),
   googleMapsApiKey: process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_MAPS_API_KEY || '',
   razorpayKeyId: process.env.EXPO_PUBLIC_RAZORPAY_KEY_ID || process.env.RAZORPAY_KEY_ID || '',
   firebaseConfig: {

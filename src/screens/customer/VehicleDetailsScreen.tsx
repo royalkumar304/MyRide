@@ -11,6 +11,7 @@ import {
   TouchableOpacity,
   FlatList,
   StatusBar,
+  Linking,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -88,6 +89,15 @@ export const VehicleDetailsScreen: React.FC<Props> = ({ navigation, route }) => 
     if (vehicle) {
       navigation.navigate('Chat', {
         recipientName: vehicle.hostName,
+      });
+    }
+  };
+
+  const handleCallHost = () => {
+    const phone = vehicle?.hostPhone || APP_CONFIG.supportPhone;
+    if (phone) {
+      Linking.openURL(`tel:${phone.replace(/[^\d+]/g, '')}`).catch((err) => {
+        console.warn('Failed to open phone dialer:', err);
       });
     }
   };
@@ -276,7 +286,7 @@ export const VehicleDetailsScreen: React.FC<Props> = ({ navigation, route }) => 
             trips={vehicle.hostTrips}
             isVerified={vehicle.isHostVerified}
             onChatPress={handleChatWithHost}
-            onCallPress={() => {}}
+            onCallPress={handleCallHost}
           />
 
           {/* Rental Guidelines */}

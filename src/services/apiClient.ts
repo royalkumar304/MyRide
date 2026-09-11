@@ -210,7 +210,7 @@ class ApiClient {
       return process.env.EXPO_PUBLIC_API_BASE_URL;
     }
     // 2. Configurable fallback from APP_CONFIG
-    if (APP_CONFIG.apiBaseUrl && !APP_CONFIG.apiBaseUrl.includes('api.myride.in')) {
+    if (APP_CONFIG.apiBaseUrl && !APP_CONFIG.apiBaseUrl.includes('api.myride.in') && !APP_CONFIG.apiBaseUrl.includes('localhost')) {
       return APP_CONFIG.apiBaseUrl;
     }
     // 3. Platform-aware fallbacks for local development

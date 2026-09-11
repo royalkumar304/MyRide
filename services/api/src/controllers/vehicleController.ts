@@ -137,10 +137,12 @@ export async function getVehicleById(req: Request, res: Response, next: NextFunc
       host = memoryStore.users.find((u) => u._id === hostIdStr);
     }
 
+    const vehicleObj = typeof vehicle.toObject === 'function' ? vehicle.toObject() : vehicle;
+
     res.json({
       success: true,
       vehicle: {
-        ...vehicle,
+        ...vehicleObj,
         host: host
           ? {
               id: host._id,
@@ -148,7 +150,7 @@ export async function getVehicleById(req: Request, res: Response, next: NextFunc
               kycStatus: host.kycStatus,
               rating: host.rating || 4.9,
             }
-          : vehicle.ownerId,
+          : vehicleObj.ownerId,
       },
     });
   } catch (error) {
@@ -158,10 +160,12 @@ export async function getVehicleById(req: Request, res: Response, next: NextFunc
 
 export async function calculateFareQuote(req: Request, res: Response, next: NextFunction) {
   try {
-    const { vehicleId, startDateTime, endDateTime, pickupType = 'self_pickup', discountAmount = 0 } = req.body;
+    const startInput = req.body.startDateTime || req.body.startDate;
+    const endInput = req.body.endDateTime || req.body.endDate;
+    const { vehicleId, pickupType = 'self_pickup', discountAmount = 0 } = req.body;
 
-    if (!vehicleId || !startDateTime || !endDateTime) {
-      res.status(400).json({ success: false, message: 'vehicleId, startDateTime, and endDateTime are required' });
+    if (!vehicleId || !startInput || !endInput) {
+      res.status(400).json({ success: false, message: 'vehicleId, startDateTime (or startDate), and endDateTime (or endDate) are required' });
       return;
     }
 
@@ -177,8 +181,8 @@ export async function calculateFareQuote(req: Request, res: Response, next: Next
       return;
     }
 
-    const start = new Date(startDateTime).getTime();
-    const end = new Date(endDateTime).getTime();
+    const start = new Date(startInput).getTime();
+    const end = new Date(endInput).getTime();
     const durationHours = Math.max(1, Math.ceil((end - start) / (1000 * 60 * 60)));
     const durationDays = Math.max(1, Math.ceil(durationHours / 24));
 
@@ -197,6 +201,7 @@ export async function calculateFareQuote(req: Request, res: Response, next: Next
       success: true,
       durationHours,
       durationDays,
+      pricing: breakdown,
       breakdown,
     });
   } catch (error) {
