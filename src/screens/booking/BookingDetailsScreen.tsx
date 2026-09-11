@@ -11,6 +11,7 @@ import {
   StatusBar,
   Modal,
   ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
@@ -60,6 +61,23 @@ export const BookingDetailsScreen: React.FC<Props> = ({ navigation, route }) => 
 
   const booking = bookings.find((b) => b.id === bookingId) || (activeBooking?.id === bookingId ? activeBooking : undefined);
 
+  const [refreshing, setRefreshing] = useState(false);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    try {
+      if (bookingId) {
+        await Promise.all([
+          dispatch(fetchBookingById(bookingId)),
+          dispatch(fetchBookings(undefined)),
+        ]);
+      }
+    } catch {
+      // safe refresh error boundary
+    } finally {
+      setRefreshing(false);
+    }
+  };
   // Cancellation Modal state
   const [isCancelModalVisible, setIsCancelModalVisible] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
@@ -246,7 +264,18 @@ export const BookingDetailsScreen: React.FC<Props> = ({ navigation, route }) => 
       <StatusBar barStyle="dark-content" backgroundColor={colors.surface} />
       <Header title="Booking Details" onBack={() => navigation.goBack()} />
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={[colors.primary]}
+            tintColor={colors.primary}
+          />
+        }
+      >
         {/* Status Header */}
         <View style={styles.statusCard}>
           <View>

@@ -55,6 +55,8 @@ router.post('/reviews', authenticateToken, bookingController.submitReview);
 // Payment Routes (Razorpay)
 router.post('/payments/create-order', authenticateToken, paymentController.createPaymentOrder);
 router.post('/payments/verify', authenticateToken, paymentController.verifyPayment);
+// Razorpay Webhook Endpoint (Direct server-to-server, authenticated via HMAC-SHA256 signature, NOT JWT)
+router.post('/payments/webhook', paymentController.handleWebhook);
 
 // Host Routes
 router.get('/host/dashboard', authenticateToken, hostController.getHostDashboard);

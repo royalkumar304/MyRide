@@ -2,7 +2,9 @@
   "compilerOptions": {
     "target": "es2022",
     "module": "commonjs",
-    "lib": ["es2022"],
+    "lib": [
+      "es2022"
+    ],
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -10,11 +12,23 @@
     "outDir": "./dist",
     "baseUrl": ".",
     "paths": {
-      "@myride/types": ["../../packages/types/src"],
-      "@myride/constants": ["../../packages/constants/src"],
-      "@myride/utils": ["../../packages/utils/src"],
-      "@myride/validation": ["../../packages/validation/src"]
-    }
+      "@myride/types": [
+        "../../packages/types/src"
+      ],
+      "@myride/constants": [
+        "../../packages/constants/src"
+      ],
+      "@myride/utils": [
+        "../../packages/utils/src"
+      ],
+      "@myride/validation": [
+        "../../packages/validation/src"
+      ]
+    },
+    "ignoreDeprecations": "6.0",
+    "rootDir": "../../"
   },
-  "include": ["src/**/*"]
+  "include": [
+    "src/**/*"
+  ]
 }

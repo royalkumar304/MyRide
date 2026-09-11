@@ -270,3 +270,17 @@ export interface IAuditLog {
   details: Record<string, any>;
   timestamp: string;
 }
+
+export interface IPaymentWebhookEvent {
+  _id?: string;
+  id?: string;
+  eventId: string;
+  event: string;
+  razorpayOrderId?: string;
+  razorpayPaymentId?: string;
+  status: 'processed' | 'failed' | 'ignored';
+  receivedAt: string;
+  processedAt?: string;
+  failureReason?: string;
+  payloadHash?: string;
+}

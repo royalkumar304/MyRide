@@ -14,6 +14,7 @@ export const ENV = {
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '7d',
   RAZORPAY_KEY_ID: process.env.RAZORPAY_KEY_ID || '',
   RAZORPAY_KEY_SECRET: process.env.RAZORPAY_KEY_SECRET || '',
+  RAZORPAY_WEBHOOK_SECRET: process.env.RAZORPAY_WEBHOOK_SECRET || '',
   CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME || 'myride-assets',
   GOOGLE_MAPS_API_KEY: process.env.GOOGLE_MAPS_API_KEY || '',
   CORS_ORIGIN: process.env.CORS_ORIGIN || '*',
@@ -25,6 +26,11 @@ if ((ENV.NODE_ENV || '').toLowerCase() === 'production') {
   if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
     throw new Error('[Production Security Exception] A strong JWT_SECRET (minimum 32 characters) must be configured in environment variables.');
   }
+  if (!process.env.RAZORPAY_WEBHOOK_SECRET || process.env.RAZORPAY_WEBHOOK_SECRET.length < 16) {
+    throw new Error('[Production Security Exception] A dedicated RAZORPAY_WEBHOOK_SECRET (minimum 16 characters) must be configured in production environment variables.');
+  }
+  const disallowed = ['mock', 'test', 'secret', 'default', 'change-me', 'change_me_to_a_random_webhook_secret'];
+  if (disallowed.includes((process.env.RAZORPAY_WEBHOOK_SECRET || '').toLowerCase())) {
+    throw new Error('[Production Security Exception] Insecure fallback RAZORPAY_WEBHOOK_SECRET is not permitted in production.');
+  }
 }
-
-

@@ -22,6 +22,12 @@ export interface IVerifySignatureParams {
   signature: string;
 }
 
+export interface IVerifyWebhookSignatureParams {
+  rawBody: string | Buffer;
+  signature: string;
+  secret?: string;
+}
+
 export const razorpayService = {
   /**
    * Checks whether Razorpay credentials are fully configured.
@@ -91,7 +97,7 @@ export const razorpayService = {
   },
 
   /**
-   * Cryptographically verifies Razorpay payment signature using HMAC-SHA256.
+   * Cryptographically verifies Razorpay payment signature from client checkout using HMAC-SHA256.
    * Expected: HMAC-SHA256(order_id + "|" + payment_id, secret) == signature
    */
   verifyPaymentSignature(params: IVerifySignatureParams): boolean {
@@ -123,8 +129,45 @@ export const razorpayService = {
   },
 
   /**
-   * Generates a valid signature for a given orderId, paymentId, and secret.
-   * Used for deterministic automated cryptographic testing.
+   * Cryptographically verifies Razorpay Webhook signature using HMAC-SHA256 on the exact raw body.
+   * Expected: HMAC-SHA256(rawBody, secret) == X-Razorpay-Signature
+   * Uses crypto.timingSafeEqual to defend against timing attacks.
+   */
+  verifyWebhookSignature(params: IVerifyWebhookSignatureParams): boolean {
+    const webhookSecret = params.secret || ENV.RAZORPAY_WEBHOOK_SECRET;
+
+    if (!webhookSecret) {
+      return false;
+    }
+
+    if (!params.rawBody || !params.signature) {
+      return false;
+    }
+
+    try {
+      const hmac = crypto.createHmac('sha256', webhookSecret);
+      if (Buffer.isBuffer(params.rawBody)) {
+        hmac.update(params.rawBody);
+      } else {
+        hmac.update(Buffer.from(params.rawBody, 'utf8'));
+      }
+      const expectedSignature = hmac.digest('hex');
+
+      const expectedBuffer = Buffer.from(expectedSignature, 'utf8');
+      const providedBuffer = Buffer.from(params.signature.trim(), 'utf8');
+
+      if (expectedBuffer.length !== providedBuffer.length) {
+        return false;
+      }
+
+      return crypto.timingSafeEqual(expectedBuffer, providedBuffer);
+    } catch {
+      return false;
+    }
+  },
+
+  /**
+   * Generates a valid payment checkout signature for testing.
    */
   generateSignatureForTesting(orderId: string, paymentId: string, secret?: string): string {
     const activeSecret = secret || ENV.RAZORPAY_KEY_SECRET;
@@ -133,6 +176,23 @@ export const razorpayService = {
     }
     const hmac = crypto.createHmac('sha256', activeSecret);
     hmac.update(`${orderId}|${paymentId}`);
+    return hmac.digest('hex');
+  },
+
+  /**
+   * Generates a valid webhook HMAC-SHA256 signature for testing.
+   */
+  generateWebhookSignatureForTesting(rawBody: string | Buffer, secret?: string): string {
+    const activeSecret = secret || ENV.RAZORPAY_WEBHOOK_SECRET;
+    if (!activeSecret) {
+      throw new Error('Secret is required to generate test webhook signature');
+    }
+    const hmac = crypto.createHmac('sha256', activeSecret);
+    if (Buffer.isBuffer(rawBody)) {
+      hmac.update(rawBody);
+    } else {
+      hmac.update(Buffer.from(rawBody, 'utf8'));
+    }
     return hmac.digest('hex');
   },
 };
@@ -164,4 +224,12 @@ export function verifyRazorpaySignature(
   signature: string
 ): boolean {
   return razorpayService.verifyPaymentSignature({ orderId, paymentId, signature });
+}
+
+export function verifyRazorpayWebhookSignature(
+  rawBody: string | Buffer,
+  signature: string,
+  secret?: string
+): boolean {
+  return razorpayService.verifyWebhookSignature({ rawBody, signature, secret });
 }

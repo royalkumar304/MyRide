@@ -10,6 +10,7 @@ export interface InMemoryDb {
   reviews?: any[];
   auditLogs: any[];
   payments: any[];
+  webhookEvents?: any[];
 }
 
 export const memoryStore: InMemoryDb = {
@@ -421,4 +422,5 @@ export const memoryStore: InMemoryDb = {
     },
   ],
   payments: [],
+  webhookEvents: [] as any[],
 };

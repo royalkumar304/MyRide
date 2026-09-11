@@ -234,7 +234,8 @@ Base URL: `http://localhost:5000/api/v1` (or `EXPO_PUBLIC_API_URL`)
 | Method | Endpoint | Auth | Description |
 | :--- | :--- | :--- | :--- |
 | `POST` | `/payments/create-order` | Bearer JWT | Generates server-side Razorpay order ID in paise matching server `booking.pricing.totalAmount`. |
-| `POST` | `/payments/verify` | Bearer JWT | Verifies Razorpay HMAC SHA-256 signature and records payment completion. |
+| `POST` | `/payments/verify` | Bearer JWT | Verifies Razorpay client checkout HMAC-SHA256 signature and confirms booking. |
+| `POST` | `/payments/webhook` | Webhook Signature (`X-Razorpay-Signature`) | Server-to-server Razorpay webhook endpoint. Reconciles payment and booking state asynchronously and idempotently without client dependency. |
 
 ### Host / Vehicle Owner
 | Method | Endpoint | Auth | Description |
@@ -256,22 +257,76 @@ Base URL: `http://localhost:5000/api/v1` (or `EXPO_PUBLIC_API_URL`)
 
 ---
 
-## 8. Razorpay Integration Architecture
+## 8. Razorpay Integration & Webhook Architecture
 
-The 4th step of the booking flow connects to Razorpay via order creation and signature verification:
+MyRide implements a production-grade, two-tier payment lifecycle combining synchronous client verification with asynchronous server-side webhooks.
 
-1. **Client requests order**: App calls `POST /payments/create-order` with booking amount in INR.
-2. **Server generates order**: Node.js backend uses Razorpay SDK:
-   ```javascript
-   const order = await razorpay.orders.create({
-     amount: amountInPaise,
-     currency: 'INR',
-     receipt: `receipt_${bookingId}`,
-   });
-   ```
+### A. Primary Client Checkout Lifecycle (Phase 2)
+1. **Client requests order**: Mobile app calls `POST /api/v1/payments/create-order` with booking ID.
+2. **Server generates authoritative order**: Backend calculates server-authoritative fare in paise (`Math.round(booking.pricing.totalAmount * 100)`), creates genuine order on Razorpay API, and binds `razorpayOrderId` to the booking.
 3. **Client opens Razorpay Checkout**: Receives `razorpay_payment_id`, `razorpay_order_id`, `razorpay_signature`.
-4. **Signature verification**: Backend verifies `HmacSHA256(order_id + "|" + payment_id, secret)`.
-5. **Confirmation**: Booking status transitions to `upcoming` and security deposit is recorded.
+4. **Signature verification**: Backend verifies `HMAC-SHA256(order_id + "|" + payment_id, secret)` using `crypto.timingSafeEqual`.
+5. **Confirmation**: Booking status transitions to `CONFIRMED` / `upcoming` and payment status to `paid`.
+
+### B. Production-Grade Server-to-Server Webhook Lifecycle (Phase 2.1)
+The webhook endpoint (`POST /api/v1/payments/webhook`) ensures authoritative payment reconciliation even if:
+- Mobile app crashes or user closes the browser immediately after paying.
+- Client network disconnects before checkout callback reaches the backend.
+- Razorpay retries webhook delivery due to transient network issues.
+- Payments or refunds transition asynchronously.
+
+#### Webhook Endpoint Configuration
+- **Production Webhook URL**:
+  ```
+  https://YOUR_PRODUCTION_API_DOMAIN/api/v1/payments/webhook
+  ```
+- **Events Configured in Razorpay Dashboard**:
+  - `payment.captured` — Captures successful payment, validates authoritative amount/currency, and confirms booking.
+  - `payment.failed` — Records failed payment attempt, keeps booking retryable in `PAYMENT_PENDING`, prevents confirmation.
+  - `order.paid` — Reconciles booking state when order is marked paid.
+
+#### Webhook Security & Signature Verification
+- **Dedicated Environment Variable**: `RAZORPAY_WEBHOOK_SECRET=CHANGE_ME_TO_A_RANDOM_WEBHOOK_SECRET`
+  > ⚠️ The exact same secret configured in the Razorpay Dashboard must be configured in the backend environment. Do NOT reuse `RAZORPAY_KEY_SECRET`. Webhook secrets must never be exposed to frontend/mobile bundles.
+- **Cryptographic Signature Verification**:
+  - Webhooks do NOT use JWT authentication.
+  - Header: `X-Razorpay-Signature`
+  - Input: **EXACT RAW HTTP Request Body** (`express.raw({ type: '*/*' })` applied strictly to webhook route)
+  - Verification: `crypto.createHmac('sha256', RAZORPAY_WEBHOOK_SECRET).update(rawBody).digest('hex')`
+  - Comparison: `crypto.timingSafeEqual()` to defend against timing attacks.
+  - Missing/invalid signatures immediately return `HTTP 400 Bad Request`.
+
+#### Financial Safety & Idempotency
+- **Durable Idempotency Store**: `PaymentWebhookEvent` collection indexed uniquely on `eventId`. Duplicate webhooks return `200 OK` with `idempotent: true` without creating duplicate payments or re-confirming bookings.
+- **Authoritative Database Validation**: The payment amount from Razorpay (in paise) is strictly validated against the server-authoritative database booking total (`Math.round(booking.pricing.totalAmount * 100)`). Any amount or currency mismatch is rejected with `HTTP 400` and logged as a security alert.
+- **State Machine Safeguards**:
+  - Cancelled bookings cannot be marked paid.
+  - Confirmed/paid bookings are never downgraded by late `payment.failed` webhooks.
+  - Out-of-order events resolve safely without financial state corruption.
+
+#### Local Development & Webhook Forwarding Workflow
+To test Razorpay webhooks locally against `http://localhost:5000`:
+1. Start a local tunnel using your preferred tunneling tool:
+   ```bash
+   # Option A: ngrok
+   ngrok http 5000
+
+   # Option B: localtunnel
+   npx localtunnel --port 5000
+   ```
+2. In Razorpay Test Dashboard -> Settings -> Webhooks -> Add New Webhook:
+   - **Webhook URL**: `https://<YOUR_TUNNEL_SUBDOMAIN>/api/v1/payments/webhook`
+   - **Secret**: Set a random secret string (e.g. `whsec_dev_local_test_1234`)
+   - **Active Events**: Select `payment.captured`, `payment.failed`, and `order.paid`
+3. Add the secret to your local `services/api/.env`:
+   ```env
+   RAZORPAY_WEBHOOK_SECRET=whsec_dev_local_test_1234
+   ```
+4. Run automated test suite:
+   ```bash
+   cd services/api
+   npm test
+   ```
 
 ---
 
