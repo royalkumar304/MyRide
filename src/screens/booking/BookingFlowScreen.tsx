@@ -71,6 +71,11 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
   // Step 4: Payment method
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethodType>('upi');
 
+  // Stable idempotency key for this booking checkout attempt
+  const [checkoutIdempotencyKey] = useState(
+    () => `idem_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+  );
+
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [isQuoteLoading, setIsQuoteLoading] = useState(false);
   const [quoteError, setQuoteError] = useState<string | null>(null);
@@ -134,6 +139,7 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
   };
 
   const handleFinalPayment = async () => {
+    if (isProcessingPayment) return;
     setIsProcessingPayment(true);
 
     try {
@@ -153,6 +159,7 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
         dropoffLocation: `${vehicle.area}, ${vehicle.city}`,
         pickupMethod,
         status: 'pending',
+        idempotencyKey: checkoutIdempotencyKey,
         pricing: {
           baseAmount: rentalSubtotal,
           durationDays,
@@ -179,6 +186,14 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
       });
 
       if (!res.success || !res.data) {
+        if (res.statusCode === 409) {
+          Alert.alert(
+            'Vehicle Unavailable',
+            res.message || 'Vehicle is no longer available for the selected dates. Please choose another date or vehicle.',
+            [{ text: 'Change Dates', onPress: () => setCurrentStep(1) }]
+          );
+          return;
+        }
         Alert.alert('Booking Failed', res.message || 'Unable to reserve vehicle with backend server. Please try again.');
         return;
       }
@@ -704,7 +719,7 @@ export const BookingFlowScreen: React.FC<Props> = ({ navigation, route }) => {
           onPress={handleNextStep}
           variant="primary"
           size="lg"
-          disabled={isQuoteLoading}
+          disabled={isQuoteLoading || isProcessingPayment}
           loading={isProcessingPayment}
           style={styles.continueBtn}
         />

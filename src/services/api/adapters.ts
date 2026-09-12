@@ -97,6 +97,8 @@ export function adaptBackendBookingStatus(status: string): BookingStatus {
   switch (status?.toUpperCase()) {
     case 'PAYMENT_PENDING':
       return 'pending';
+    case 'EXPIRED':
+      return 'expired';
     case 'CONFIRMED':
       return 'upcoming';
     case 'ACTIVE':
@@ -174,6 +176,8 @@ export function adaptBackendBookingToMobile(b: any): Booking {
     fare,
     status: adaptBackendBookingStatus(b.bookingStatus || b.status),
     paymentStatus: b.paymentStatus === 'PAID' ? 'completed' : (b.paymentStatus || 'pending'),
+    reservationExpiresAt: b.reservationExpiresAt ? new Date(b.reservationExpiresAt).toISOString() : undefined,
+    idempotencyKey: b.idempotencyKey,
     cancellationReason: b.cancellationReason,
     cancelledAt: b.cancelledAt,
     refundPercentage: b.refundPercentage,

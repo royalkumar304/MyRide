@@ -38,6 +38,7 @@ router.post('/auth/login-admin', authController.loginAsAdmin);
 router.get('/vehicles', vehicleController.listVehicles);
 router.get('/vehicles/cities', vehicleController.getSupportedCities);
 router.post('/vehicles/quote', vehicleController.calculateFareQuote);
+router.get('/vehicles/:id/availability', vehicleController.checkAvailability);
 router.get('/vehicles/:id/reviews', bookingController.getVehicleReviews);
 router.get('/vehicles/:id', vehicleController.getVehicleById);
 

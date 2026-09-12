@@ -20,6 +20,7 @@ export const ENV = {
   CORS_ORIGIN: process.env.CORS_ORIGIN || '*',
   EXPOSE_DEV_OTP: process.env.NODE_ENV !== 'production' && process.env.EXPOSE_DEV_OTP !== 'false',
   USE_MEMORY_STORE: process.env.USE_MEMORY_STORE === 'true' || process.env.USE_MEMORY_STORE === '1',
+  BOOKING_PAYMENT_HOLD_MINUTES: parseInt(process.env.BOOKING_PAYMENT_HOLD_MINUTES || '15', 10),
 };
 
 if ((ENV.NODE_ENV || '').toLowerCase() === 'production') {

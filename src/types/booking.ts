@@ -1,6 +1,6 @@
 import { Vehicle } from './vehicle';
 
-export type BookingStatus = 'upcoming' | 'active' | 'completed' | 'cancelled' | 'pending';
+export type BookingStatus = 'upcoming' | 'active' | 'completed' | 'cancelled' | 'pending' | 'expired';
 export type PickupMethod = 'self_pickup' | 'home_delivery';
 
 export interface InspectionData {
@@ -66,6 +66,8 @@ export interface Booking {
   fare: BookingFare;
   paymentId?: string;
   paymentStatus: 'pending' | 'completed' | 'failed' | 'refunded';
+  reservationExpiresAt?: string;
+  idempotencyKey?: string;
   
   // Digital Handover
   startInspection?: InspectionData;

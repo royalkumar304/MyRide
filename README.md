@@ -123,6 +123,9 @@ RAZORPAY_KEY_SECRET=YOUR_PRIVATE_RAZORPAY_SECRET
 CLOUDINARY_CLOUD_NAME=myride-assets
 CLOUDINARY_API_KEY=YOUR_CLOUDINARY_KEY
 CLOUDINARY_API_SECRET=YOUR_CLOUDINARY_SECRET
+
+# Booking Availability & Payment Hold (Phase 3A)
+BOOKING_PAYMENT_HOLD_MINUTES=15
 ```
 
 > ⚠️ **Security Policy**: In `NODE_ENV=production`, fallback to memory store is strictly prohibited. Production database failure safely halts startup or reports 503 Unhealthy on `/health`.
@@ -216,6 +219,7 @@ Base URL: `http://localhost:5000/api/v1` (or `EXPO_PUBLIC_API_URL`)
 | `GET` | `/vehicles` | Public | Lists available vehicles with query filters (`city`, `area`, `vehicleType`, `brand`, `price`, `fuel`, `transmission`, `seats`, `rating`, `distance`, `availability`). |
 | `GET` | `/vehicles/cities` | Public | Returns supported tier-2 and tier-3 cities and mobility hubs. |
 | `GET` | `/vehicles/:id` | Public | Retrieves detailed vehicle specifications, pricing, host info, and features. |
+| `GET` | `/vehicles/:id/availability` | Public | Checks real-time slot availability, conflicting bookings, and unexpired payment holds for requested date range. |
 | `POST` | `/vehicles/quote` | Public | Calculates server-authoritative fare quote (base fare, 15% platform commission, GST taxes, delivery fee, refundable security deposit). |
 | `GET` | `/vehicles/:id/reviews` | Public | Retrieves verified customer reviews and ratings for a vehicle. |
 
@@ -330,7 +334,170 @@ To test Razorpay webhooks locally against `http://localhost:5000`:
 
 ---
 
-## 9. Google Maps Integration
+## 9. Core Booking Availability & Double-Booking Prevention (Phase 3A)
+
+MyRide implements an authoritative, concurrency-safe booking engine designed to prevent double-bookings, handle simultaneous checkout attempts, manage temporary payment holds, and support idempotent requests.
+
+### A. Authoritative Booking Lifecycle & State Transitions
+
+```
+[ POST /bookings ]
+        │
+        ▼
+   ┌─────────┐
+   │ CREATED │
+   └────┬────┘
+        │ (Razorpay Order Created)
+        ▼
+┌─────────────────┐  Payment Timeout (15m)  ┌─────────┐
+│ PAYMENT_PENDING ├─────────────────────────►│ EXPIRED │ (Terminal)
+└───────┬─────────┘                          └─────────┘
+        │
+        ├───────────────────────────────────┐
+        │ Signature Verified /              │ Checkout Failed / Cancelled
+        │ Webhook payment.captured          │
+        ▼                                   ▼
+┌───────────────┐                    ┌───────────┐
+│   CONFIRMED   │                    │  FAILED   │ (Terminal)
+│   (UPCOMING)  │                    └───────────┘
+└───────┬───────┘
+        │
+        ├───────────────────────────────────┐ Customer / Host Cancellation
+        │ Digital Handover (Pickup)         │ before trip start
+        ▼                                   ▼
+  ┌───────────┐                       ┌───────────┐
+  │  ACTIVE   │                       │ CANCELLED │ (Terminal)
+  └─────┬─────┘                       └───────────┘
+        │ Digital Return Handover
+        ▼
+  ┌───────────┐
+  │ COMPLETED │ (Terminal)
+  └───────────┘
+```
+
+#### Transition Invariants
+- **Active Hold States**: `CREATED`, `PAYMENT_PENDING` (only while `reservationExpiresAt > now`), `CONFIRMED`, `UPCOMING`, `ACTIVE`.
+- **Released / Terminal States**: `CANCELLED`, `EXPIRED`, `FAILED`, `REFUNDED`, `COMPLETED`.
+- A booking in a terminal state cannot be paid, verified, or transitioned back to active.
+- Expired holds release vehicle availability immediately.
+
+### B. Availability & Overlap Conflict Rules
+
+Two booking intervals $[A_{start}, A_{end}]$ and $[B_{start}, B_{end}]$ conflict if and only if:
+$$\text{conflict} \iff (A_{start} < B_{end}) \land (A_{end} > B_{start})$$
+
+- **Exact Match**: Requesting identical slot $\rightarrow$ **Blocked (409)**.
+- **Partial Overlap**: Requesting slot starting before and ending during an existing booking, or starting during and ending after $\rightarrow$ **Blocked (409)**.
+- **Envelope / Enveloped**: Requesting slot that completely encompasses or is completely inside an existing booking $\rightarrow$ **Blocked (409)**.
+- **Adjacent Bookings**: If $A_{end} == B_{start}$ or $A_{start} == B_{end}$ (e.g. 10:00 AM – 12:00 PM and 12:00 PM – 2:00 PM), the condition evaluates to `false` and the booking is **allowed**. Adjacent rentals transition seamlessly without artificial cooldown dead zones.
+
+### C. Temporary Payment-Pending Holds & Auto-Expiration
+- When a booking is created, the system locks the requested slot for a configurable window:
+  ```env
+  BOOKING_PAYMENT_HOLD_MINUTES=15
+  ```
+- **Renter Protection**: The slot is reserved while the user reviews fare breakdown and enters UPI/Card credentials in Razorpay Checkout.
+- **Fleet Protection**: If payment is not captured within 15 minutes:
+  - The slot is automatically treated as available for subsequent renters.
+  - Payment order creation (`POST /payments/create-order`) and signature verification (`POST /payments/verify`) reject expired bookings with `HTTP 400 Bad Request`.
+  - Lazy resolution and background sweeps mark the booking as `EXPIRED`.
+
+### D. Idempotency Key Semantics
+- Clients generate a unique UUIDv4 `idempotencyKey` per checkout attempt.
+- If a user double-taps "Book Now" or network retries re-send the request:
+  - The server searches for an existing booking matching `(customerId, idempotencyKey)`.
+  - If found, returns the existing booking with `HTTP 200/201 OK` without creating duplicate records or claiming multiple vehicle slots.
+
+### E. Concurrency Strategy & Zero Double-Booking Guarantee
+To eliminate read-then-write race conditions under high concurrent traffic (e.g. flash sales or festival bookings):
+1. **Document-Level Atomic Reservation**:
+   MongoDB executes an atomic `Vehicle.findOneAndUpdate` operation:
+   ```javascript
+   Vehicle.findOneAndUpdate(
+     {
+       _id: vehicleId,
+       activeReservations: {
+         $not: {
+           $elemMatch: {
+             status: { $in: ['PENDING', 'CONFIRMED'] },
+             expiresAt: { $gt: now },
+             startDateTime: { $lt: requestedEnd },
+             endDateTime: { $gt: requestedStart }
+           }
+         }
+       }
+     },
+     {
+       $push: {
+         activeReservations: {
+           bookingId,
+           customerId,
+           idempotencyKey,
+           startDateTime: requestedStart,
+           endDateTime: requestedEnd,
+           expiresAt: holdExpiresAt,
+           status: 'PENDING'
+         }
+       }
+     },
+     { new: true }
+   );
+   ```
+2. **Serialization**: MongoDB's single-document write lock serializes concurrent write operations. Only one concurrent thread succeeds; all other racing threads fail to match the `$not: { $elemMatch: ... }` criteria and receive `HTTP 409 Conflict`.
+3. **Double Check**: An additional cross-collection query on `Booking` ensures full bidirectional consistency.
+
+### F. MongoDB Production Indexes
+To ensure sub-10ms query times across millions of bookings and vehicle slots:
+
+```javascript
+// Booking collection
+db.bookings.createIndex(
+  { vehicleId: 1, bookingStatus: 1, startDateTime: 1, endDateTime: 1 },
+  { name: "booking_availability_idx" }
+);
+
+db.bookings.createIndex(
+  { customerId: 1, idempotencyKey: 1 },
+  { name: "booking_idempotency_idx" }
+);
+
+db.bookings.createIndex(
+  { bookingStatus: 1, reservationExpiresAt: 1 },
+  { name: "booking_expiration_idx" }
+);
+
+db.bookings.createIndex(
+  { bookingId: 1 },
+  { unique: true, name: "booking_bookingId_unique" }
+);
+
+// Vehicle collection
+db.vehicles.createIndex(
+  { "activeReservations.expiresAt": 1 },
+  { name: "vehicle_reservation_expiry_idx" }
+);
+```
+
+### G. HTTP 409 API Conflict Response Format
+When a slot conflict or concurrency collision occurs, the API returns a structured, client-friendly error:
+
+```json
+{
+  "status": "error",
+  "message": "Vehicle is not available for the selected dates/times.",
+  "code": "SLOT_UNAVAILABLE",
+  "details": {
+    "conflict": {
+      "startDateTime": "2026-09-15T10:00:00.000Z",
+      "endDateTime": "2026-09-15T18:00:00.000Z"
+    }
+  }
+}
+```
+
+---
+
+## 10. Google Maps Integration
 
 For production navigation and address geocoding:
 - Uses `react-native-maps` with Google Maps SDK for Android & iOS.
@@ -349,7 +516,7 @@ For production navigation and address geocoding:
 
 ---
 
-## 10. Firebase Push Notifications
+## 11. Firebase Push Notifications
 
 FCM notification architecture is structured for the following lifecycle events:
 - Booking confirmed: *"Your booking for Hyundai i20 is confirmed 🎉"*
@@ -359,7 +526,7 @@ FCM notification architecture is structured for the following lifecycle events:
 
 ---
 
-## 11. Production Build Instructions
+## 12. Production Build Instructions
 
 ### Android APK / AAB
 Using EAS (Expo Application Services):
@@ -377,7 +544,7 @@ eas build --platform ios --profile production
 
 ---
 
-## 12. License & Attribution
+## 13. License & Attribution
 
 Copyright © 2026 MyRide Mobility India Pvt. Ltd. All rights reserved.
 Built for the Bharat Mobility Revolution.

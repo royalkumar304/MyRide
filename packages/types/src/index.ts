@@ -94,6 +94,13 @@ export interface IVehicle {
   totalTrips: number;
   deliveryAvailable: boolean;
   instantBooking: boolean;
+  activeReservations?: Array<{
+    bookingId: string;
+    startDateTime: Date | string;
+    endDateTime: Date | string;
+    expiresAt?: Date | string;
+    status: string;
+  }>;
   createdAt: string;
   updatedAt?: string;
 }
@@ -108,7 +115,9 @@ export type BookingStatus =
   | 'RETURN_PENDING'
   | 'COMPLETED'
   | 'CANCELLED'
-  | 'REFUNDED';
+  | 'REFUNDED'
+  | 'EXPIRED'
+  | 'FAILED';
 
 export type PickupType = 'self_pickup' | 'home_delivery';
 
@@ -163,6 +172,8 @@ export interface IBooking {
   pricing: IBookingPricing;
   paymentStatus: 'pending' | 'processing' | 'paid' | 'completed' | 'failed' | 'refunded' | 'cancelled';
   bookingStatus: BookingStatus;
+  reservationExpiresAt?: string;
+  idempotencyKey?: string;
   razorpayOrderId?: string;
   razorpayPaymentId?: string;
   paidAt?: string;

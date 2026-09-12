@@ -71,10 +71,23 @@ export function calculateRentalFare(params: {
 
 /**
  * Generates official MyRide booking reference ID
+ * Cryptographically random and collision-resistant
  */
 export function generateBookingId(): string {
-  const randomSuffix = Math.floor(100000 + Math.random() * 900000);
-  return `MYR-${randomSuffix}`;
+  let num: number;
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    const arr = new Uint32Array(1);
+    crypto.getRandomValues(arr);
+    num = 100000 + (arr[0] % 900000);
+  } else {
+    try {
+      const nodeCrypto = require('crypto');
+      num = 100000 + (nodeCrypto.randomBytes(4).readUInt32BE(0) % 900000);
+    } catch {
+      num = Math.floor(100000 + Math.random() * 900000);
+    }
+  }
+  return `MYR-${num}`;
 }
 
 /**

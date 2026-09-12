@@ -3,6 +3,7 @@ import { isUsingMemoryStore } from '../config/db';
 import { memoryStore } from '../config/store';
 import VehicleModel from '../models/Vehicle';
 import { calculateBookingPrice } from '../services/pricingEngine';
+import { checkVehicleAvailability } from '../services/availabilityService';
 import { TIER2_TIER3_CITIES } from '@myride/constants';
 import { VehicleSearchQuerySchema } from '@myride/validation';
 import { VehicleType } from '@myride/types';
@@ -214,4 +215,35 @@ export async function getSupportedCities(req: Request, res: Response) {
     success: true,
     cities: TIER2_TIER3_CITIES,
   });
+}
+
+export async function checkAvailability(req: Request, res: Response, next: NextFunction) {
+  try {
+    const vehicleId = (req.params.id as string) || (req.query.vehicleId as string);
+    const startDateTime = (req.query.startDateTime as string) || (req.query.startDate as string);
+    const endDateTime = (req.query.endDateTime as string) || (req.query.endDate as string);
+
+    if (!vehicleId || !startDateTime || !endDateTime) {
+      res.status(400).json({
+        success: false,
+        message: 'vehicleId, startDateTime, and endDateTime are required',
+      });
+      return;
+    }
+
+    const result = await checkVehicleAvailability({
+      vehicleId,
+      startDateTime,
+      endDateTime,
+    });
+
+    res.json({
+      success: true,
+      vehicleId,
+      isAvailable: result.isAvailable,
+      reason: result.reason,
+    });
+  } catch (error) {
+    next(error);
+  }
 }

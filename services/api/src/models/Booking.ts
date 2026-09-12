@@ -45,7 +45,11 @@ export interface IBookingDoc extends Document {
     | 'RETURN_PENDING'
     | 'COMPLETED'
     | 'CANCELLED'
-    | 'REFUNDED';
+    | 'REFUNDED'
+    | 'EXPIRED'
+    | 'FAILED';
+  reservationExpiresAt?: Date;
+  idempotencyKey?: string;
   razorpayOrderId?: string;
   razorpayPaymentId?: string;
   paidAt?: Date;
@@ -117,10 +121,14 @@ const BookingSchema = new Schema<IBookingDoc>(
         'COMPLETED',
         'CANCELLED',
         'REFUNDED',
+        'EXPIRED',
+        'FAILED',
       ],
       default: 'UPCOMING',
       index: true,
     },
+    reservationExpiresAt: { type: Date, index: true },
+    idempotencyKey: { type: String, sparse: true, index: true },
     razorpayOrderId: { type: String, unique: true, sparse: true },
     razorpayPaymentId: { type: String, index: true, sparse: true },
     paidAt: { type: Date },
@@ -132,8 +140,14 @@ const BookingSchema = new Schema<IBookingDoc>(
   { timestamps: true }
 );
 
-// Compound index for availability overlap check
-BookingSchema.index({ vehicleId: 1, startDateTime: 1, endDateTime: 1, bookingStatus: 1 });
+// Compound index for optimized availability overlap query (ESR rule: vehicleId = eq, bookingStatus = in, dates = range)
+BookingSchema.index({ vehicleId: 1, bookingStatus: 1, startDateTime: 1, endDateTime: 1 });
+
+// Compound unique sparse index for idempotent booking creation per customer
+BookingSchema.index({ customerId: 1, idempotencyKey: 1 }, { unique: true, sparse: true });
+
+// Compound index for efficient reservation expiration evaluation and cleanup
+BookingSchema.index({ bookingStatus: 1, reservationExpiresAt: 1 });
 
 export const BookingModel =
   mongoose.models.Booking || mongoose.model<IBookingDoc>('Booking', BookingSchema);

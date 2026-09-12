@@ -44,6 +44,15 @@ export interface IVehicleDoc extends Omit<Document, 'model'> {
   totalTrips: number;
   deliveryAvailable: boolean;
   instantBooking: boolean;
+  activeReservations?: Array<{
+    bookingId: string;
+    customerId?: string;
+    idempotencyKey?: string;
+    startDateTime: Date;
+    endDateTime: Date;
+    expiresAt?: Date;
+    status: string;
+  }>;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -98,6 +107,17 @@ const VehicleSchema = new Schema<IVehicleDoc>(
     totalTrips: { type: Number, default: 0 },
     deliveryAvailable: { type: Boolean, default: true },
     instantBooking: { type: Boolean, default: true },
+    activeReservations: [
+      {
+        bookingId: { type: String, required: true },
+        customerId: { type: String },
+        idempotencyKey: { type: String },
+        startDateTime: { type: Date, required: true },
+        endDateTime: { type: Date, required: true },
+        expiresAt: { type: Date },
+        status: { type: String, required: true },
+      },
+    ],
   },
   { timestamps: true }
 );

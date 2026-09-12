@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { isUsingMemoryStore } from '../config/db';
 import { memoryStore } from '../config/store';
 import BookingModel from '../models/Booking';
+import VehicleModel from '../models/Vehicle';
 import PaymentModel from '../models/Payment';
 import PaymentWebhookEventModel from '../models/PaymentWebhookEvent';
 import { AuditLogModel } from '../models/ReviewAndMeta';
@@ -61,6 +62,24 @@ export async function createPaymentOrder(req: any, res: Response, next: NextFunc
       res.status(400).json({
         success: false,
         message: 'Cannot create payment order for a cancelled or refunded booking',
+      });
+      return;
+    }
+
+    if (
+      booking.bookingStatus === 'EXPIRED' ||
+      (booking.bookingStatus === 'PAYMENT_PENDING' &&
+        booking.reservationExpiresAt &&
+        new Date(booking.reservationExpiresAt) <= new Date())
+    ) {
+      if (isUsingMemoryStore()) {
+        booking.bookingStatus = 'EXPIRED';
+      } else {
+        await BookingModel.updateOne({ _id: booking._id }, { bookingStatus: 'EXPIRED' });
+      }
+      res.status(400).json({
+        success: false,
+        message: 'Booking reservation has expired. Please select dates again to reserve the vehicle.',
       });
       return;
     }
@@ -232,6 +251,19 @@ export async function verifyPayment(req: any, res: Response, next: NextFunction)
       return;
     }
 
+    if (
+      booking.bookingStatus === 'EXPIRED' ||
+      (booking.bookingStatus === 'PAYMENT_PENDING' &&
+        booking.reservationExpiresAt &&
+        new Date(booking.reservationExpiresAt) <= new Date())
+    ) {
+      res.status(400).json({
+        success: false,
+        message: 'Booking reservation has expired. Cannot verify payment for an expired booking.',
+      });
+      return;
+    }
+
     // 5. Order ID Association Validation: Verify order ID belongs to expected booking
     if (booking.razorpayOrderId && booking.razorpayOrderId !== razorpayOrderId) {
       res.status(400).json({
@@ -325,6 +357,12 @@ export async function verifyPayment(req: any, res: Response, next: NextFunction)
         method,
         status: 'captured',
       });
+
+      // Update Vehicle active reservation to CONFIRMED
+      await VehicleModel.updateOne(
+        { _id: booking.vehicleId, 'activeReservations.bookingId': booking.bookingId },
+        { $set: { 'activeReservations.$.status': 'CONFIRMED' } }
+      ).catch(() => {});
     }
 
     res.json({
@@ -835,6 +873,12 @@ export async function handleWebhook(req: Request, res: Response, next: NextFunct
           { upsert: true, new: true }
         );
 
+        // Update Vehicle active reservation to CONFIRMED
+        await VehicleModel.updateOne(
+          { _id: booking.vehicleId, 'activeReservations.bookingId': booking.bookingId },
+          { $set: { 'activeReservations.$.status': 'CONFIRMED' } }
+        ).catch(() => {});
+
         await AuditLogModel.create({
           action: 'BOOKING_CANCELLED', // using schema-supported action or details
           targetId: booking._id,
@@ -954,6 +998,12 @@ export async function handleWebhook(req: Request, res: Response, next: NextFunct
           },
           { new: true }
         );
+
+        // Update Vehicle active reservation to CONFIRMED
+        await VehicleModel.updateOne(
+          { _id: booking.vehicleId, 'activeReservations.bookingId': booking.bookingId },
+          { $set: { 'activeReservations.$.status': 'CONFIRMED' } }
+        ).catch(() => {});
       }
 
       await recordWebhookEvent('processed', { razorpayOrderId, razorpayPaymentId });

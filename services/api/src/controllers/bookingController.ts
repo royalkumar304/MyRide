@@ -10,11 +10,40 @@ import { isVehicleAvailableForDates } from '../services/availabilityService';
 import { generateBookingId } from '@myride/utils';
 import { BookingCreateSchema } from '@myride/validation';
 import { VehicleType, IHostEarning } from '@myride/types';
+import { ENV } from '../config/env';
 
 export async function createBooking(req: any, res: Response, next: NextFunction) {
   try {
-    const customerId = req.user?.userId || 'user_cust_1';
+    const customerId = req.user?.userId || req.user?.id || 'user_cust_1';
     const body = BookingCreateSchema.parse(req.body);
+
+    const idempotencyKey =
+      (req.headers['idempotency-key'] as string) ||
+      (req.headers['x-idempotency-key'] as string) ||
+      body.idempotencyKey ||
+      undefined;
+
+    // 1. Idempotency Check: Return existing booking if same user + same key submitted
+    if (idempotencyKey) {
+      let existingBooking: any = null;
+      if (isUsingMemoryStore()) {
+        existingBooking = memoryStore.bookings.find(
+          (b) => String(b.customerId) === String(customerId) && b.idempotencyKey === idempotencyKey
+        );
+      } else {
+        existingBooking = await BookingModel.findOne({ customerId, idempotencyKey });
+      }
+
+      if (existingBooking) {
+        res.status(200).json({
+          success: true,
+          message: 'Booking retrieved via idempotency key.',
+          booking: existingBooking,
+          idempotent: true,
+        });
+        return;
+      }
+    }
 
     const start = new Date(body.startDateTime);
     const end = new Date(body.endDateTime);
@@ -24,52 +53,130 @@ export async function createBooking(req: any, res: Response, next: NextFunction)
       return;
     }
 
-    // Double-booking check
-    const isAvailable = await isVehicleAvailableForDates(body.vehicleId, start, end);
-    if (!isAvailable) {
-      res.status(409).json({
-        success: false,
-        message: 'This vehicle is already reserved for the selected dates. Please pick another slot or vehicle.',
-      });
-      return;
-    }
-
-    // Fetch vehicle
-    let vehicle: any = null;
-    if (isUsingMemoryStore()) {
-      vehicle = memoryStore.vehicles.find((v) => v._id === body.vehicleId);
-    } else {
-      vehicle = await VehicleModel.findById(body.vehicleId);
-    }
-
-    if (!vehicle) {
-      res.status(404).json({ success: false, message: 'Vehicle not found' });
-      return;
-    }
-
-    const durationDays = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
-    const vType = (vehicle.type || 'CAR').toUpperCase() as VehicleType;
-
-    // Server-side calculation using dynamic PlatformSettings commission
-    const pricing = await calculateBookingPrice({
-      dailyRate: vehicle.pricing.dailyRate,
-      durationDays,
-      vehicleType: vType,
-      pickupType: body.pickupType,
-      discountAmount: 0,
-      securityDeposit: vehicle.pricing.securityDeposit || 2000,
-    });
-
+    const now = new Date();
+    const holdMinutes = ENV.BOOKING_PAYMENT_HOLD_MINUTES || 15;
+    const reservationExpiresAt = new Date(now.getTime() + holdMinutes * 60 * 1000);
     const bookingId = generateBookingId();
-    const hostIdStr = typeof vehicle.ownerId === 'object' ? vehicle.ownerId._id : vehicle.ownerId;
-    const customerName = req.user?.name || 'Rahul Sharma';
-    const customerPhone = req.user?.phone || '9876543210';
-    const hostName = vehicle.ownerName || 'Amitabh Verma';
-    const hostPhone = vehicle.ownerPhone || '9876500001';
 
-    let booking: any = null;
+    let vehicle: any = null;
+
     if (isUsingMemoryStore()) {
-      booking = {
+      vehicle = memoryStore.vehicles.find((v) => v._id === body.vehicleId || v.id === body.vehicleId);
+      if (!vehicle) {
+        res.status(404).json({ success: false, message: 'Vehicle not found' });
+        return;
+      }
+
+      if (vehicle.verificationStatus && vehicle.verificationStatus !== 'APPROVED') {
+        res.status(400).json({ success: false, message: 'Vehicle is currently not approved for public rental' });
+        return;
+      }
+
+      if (vehicle.availability && !vehicle.availability.isAvailable) {
+        res.status(400).json({ success: false, message: 'Host has temporarily paused vehicle availability' });
+        return;
+      }
+
+      if (!vehicle.activeReservations) {
+        vehicle.activeReservations = [];
+      }
+
+      // Clean expired holds on vehicle synchronously
+      vehicle.activeReservations = vehicle.activeReservations.filter((r: any) => {
+        if (r.status === 'PAYMENT_PENDING' && r.expiresAt && new Date(r.expiresAt) <= now) {
+          return false;
+        }
+        return true;
+      });
+
+      // Clean expired in memoryStore.bookings
+      memoryStore.bookings.forEach((b) => {
+        if (
+          (b.vehicleId === body.vehicleId || (b.vehicle && b.vehicle._id === body.vehicleId)) &&
+          b.bookingStatus === 'PAYMENT_PENDING' &&
+          b.reservationExpiresAt &&
+          new Date(b.reservationExpiresAt) <= now
+        ) {
+          b.bookingStatus = 'EXPIRED';
+        }
+      });
+
+      // Check in-flight concurrent reservation with identical idempotency key
+      if (idempotencyKey) {
+        const inFlight = vehicle.activeReservations.find(
+          (r: any) => String(r.customerId) === String(customerId) && r.idempotencyKey === idempotencyKey
+        );
+        if (inFlight) {
+          for (let i = 0; i < 20; i++) {
+            const found = memoryStore.bookings.find(
+              (b) => String(b.customerId) === String(customerId) && b.idempotencyKey === idempotencyKey
+            );
+            if (found) {
+              res.status(200).json({
+                success: true,
+                message: 'Booking retrieved via idempotency key.',
+                booking: found,
+                idempotent: true,
+              });
+              return;
+            }
+            await new Promise((r) => setImmediate(r));
+          }
+        }
+      }
+
+      // Synchronously check conflict against activeReservations AND bookings before any async tick
+      const hasConflict =
+        vehicle.activeReservations.some((r: any) => {
+          if (!['PAYMENT_PENDING', 'CONFIRMED', 'UPCOMING', 'PICKUP_PENDING', 'ACTIVE'].includes(r.status)) return false;
+          if (r.status === 'PAYMENT_PENDING' && r.expiresAt && new Date(r.expiresAt) <= now) return false;
+          return new Date(r.startDateTime) < end && new Date(r.endDateTime) > start;
+        }) ||
+        memoryStore.bookings.some((b) => {
+          if (b.vehicleId !== body.vehicleId && (!b.vehicle || b.vehicle._id !== body.vehicleId)) return false;
+          if (!['PAYMENT_PENDING', 'CONFIRMED', 'UPCOMING', 'PICKUP_PENDING', 'ACTIVE'].includes(b.bookingStatus)) return false;
+          if (b.bookingStatus === 'PAYMENT_PENDING' && b.reservationExpiresAt && new Date(b.reservationExpiresAt) <= now) return false;
+          return new Date(b.startDateTime) < end && new Date(b.endDateTime) > start;
+        });
+
+      if (hasConflict) {
+        res.status(409).json({
+          success: false,
+          message: 'Vehicle is no longer available for the selected dates.',
+        });
+        return;
+      }
+
+      // Synchronously lock the slot on the vehicle object immediately
+      vehicle.activeReservations.push({
+        bookingId,
+        customerId: String(customerId),
+        idempotencyKey,
+        startDateTime: start,
+        endDateTime: end,
+        expiresAt: reservationExpiresAt,
+        status: 'PAYMENT_PENDING',
+      });
+
+      const durationDays = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
+      const vType = (vehicle.type || 'CAR').toUpperCase() as VehicleType;
+
+      const pricing = await calculateBookingPrice({
+        dailyRate: vehicle.pricing.dailyRate,
+        durationDays,
+        vehicleType: vType,
+        pickupType: body.pickupType,
+        discountAmount: 0,
+        securityDeposit: vehicle.pricing.securityDeposit || 2000,
+      });
+
+      const hostIdStr = typeof vehicle.ownerId === 'object' ? vehicle.ownerId._id : vehicle.ownerId;
+      const customerName = req.user?.name || 'Rahul Sharma';
+      const customerPhone = req.user?.phone || '9876543210';
+      const hostName = vehicle.ownerName || 'Amitabh Verma';
+      const hostPhone = vehicle.ownerPhone || '9876500001';
+
+      const booking = {
         _id: `book_${Date.now()}`,
         id: `book_${Date.now()}`,
         bookingId,
@@ -79,7 +186,7 @@ export async function createBooking(req: any, res: Response, next: NextFunction)
         hostId: hostIdStr,
         hostName,
         hostPhone,
-        vehicleId: vehicle._id,
+        vehicleId: vehicle._id || vehicle.id,
         vehicle,
         startDateTime: start.toISOString(),
         endDateTime: end.toISOString(),
@@ -88,13 +195,116 @@ export async function createBooking(req: any, res: Response, next: NextFunction)
         pickupLocation: body.pickupLocation || vehicle.location?.address || 'Hazratganj Hub',
         dropoffLocation: body.dropoffLocation || vehicle.location?.address || 'Hazratganj Hub',
         pricing,
-        bookingStatus: 'PAYMENT_PENDING',
-        paymentStatus: 'pending',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        bookingStatus: 'PAYMENT_PENDING' as const,
+        paymentStatus: 'pending' as const,
+        reservationExpiresAt: reservationExpiresAt.toISOString(),
+        idempotencyKey,
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
       };
       memoryStore.bookings.push(booking);
-    } else {
+
+      res.status(201).json({
+        success: true,
+        message: 'Booking reserved successfully. Please proceed to payment.',
+        booking,
+      });
+      return;
+    }
+
+    // Live MongoDB Atomic Document Reservation Strategy
+    // Clean up expired reservations on the vehicle lazily
+    await VehicleModel.updateOne(
+      { _id: body.vehicleId },
+      {
+        $pull: {
+          activeReservations: {
+            status: 'PAYMENT_PENDING',
+            expiresAt: { $lte: now },
+          },
+        },
+      }
+    ).catch(() => {});
+
+    // Atomically claim the slot on the vehicle document.
+    // MongoDB's single-document write lock serializes concurrent attempts.
+    // If an overlapping unexpired reservation exists, $not: { $elemMatch: ... } evaluates false and update returns null.
+    const updatedVehicle = await VehicleModel.findOneAndUpdate(
+      {
+        _id: body.vehicleId,
+        verificationStatus: 'APPROVED',
+        'availability.isAvailable': { $ne: false },
+        activeReservations: {
+          $not: {
+            $elemMatch: {
+              status: { $in: ['PAYMENT_PENDING', 'CONFIRMED', 'UPCOMING', 'PICKUP_PENDING', 'ACTIVE'] },
+              startDateTime: { $lt: end },
+              endDateTime: { $gt: start },
+              $or: [
+                { status: { $ne: 'PAYMENT_PENDING' } },
+                { expiresAt: { $gt: now } },
+              ],
+            },
+          },
+        },
+      },
+      {
+        $push: {
+          activeReservations: {
+            bookingId,
+            startDateTime: start,
+            endDateTime: end,
+            expiresAt: reservationExpiresAt,
+            status: 'PAYMENT_PENDING',
+          },
+        },
+      },
+      { new: true }
+    );
+
+    if (!updatedVehicle) {
+      // Diagnostic check: why did the reservation fail?
+      const existingVeh = await VehicleModel.findById(body.vehicleId);
+      if (!existingVeh) {
+        res.status(404).json({ success: false, message: 'Vehicle not found' });
+        return;
+      }
+      if (existingVeh.verificationStatus !== 'APPROVED') {
+        res.status(400).json({ success: false, message: 'Vehicle is currently not approved for public rental' });
+        return;
+      }
+      if (existingVeh.availability && !existingVeh.availability.isAvailable) {
+        res.status(400).json({ success: false, message: 'Host has temporarily paused vehicle availability' });
+        return;
+      }
+      res.status(409).json({
+        success: false,
+        message: 'Vehicle is no longer available for the selected dates.',
+      });
+      return;
+    }
+
+    vehicle = updatedVehicle;
+    const durationDays = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)));
+    const vType = (vehicle.type || 'CAR').toUpperCase() as VehicleType;
+
+    const pricing = await calculateBookingPrice({
+      dailyRate: vehicle.pricing.dailyRate,
+      durationDays,
+      vehicleType: vType,
+      pickupType: body.pickupType,
+      discountAmount: 0,
+      securityDeposit: vehicle.pricing.securityDeposit || 2000,
+    });
+
+    const hostIdStr = typeof vehicle.ownerId === 'object' ? vehicle.ownerId._id : vehicle.ownerId;
+    const customerName = req.user?.name || 'Rahul Sharma';
+    const customerPhone = req.user?.phone || '9876543210';
+    const hostName = vehicle.ownerName || 'Amitabh Verma';
+    const hostPhone = vehicle.ownerPhone || '9876500001';
+
+    let booking: any = null;
+    try {
       booking = await BookingModel.create({
         bookingId,
         customerId,
@@ -113,7 +323,30 @@ export async function createBooking(req: any, res: Response, next: NextFunction)
         pricing,
         bookingStatus: 'PAYMENT_PENDING',
         paymentStatus: 'pending',
+        reservationExpiresAt,
+        idempotencyKey,
       });
+    } catch (createErr: any) {
+      // Compensating rollback: release vehicle reservation if booking document creation fails
+      await VehicleModel.updateOne(
+        { _id: vehicle._id },
+        { $pull: { activeReservations: { bookingId } } }
+      ).catch(() => {});
+
+      if (createErr.code === 11000 && idempotencyKey) {
+        // Concurrent identical request with same idempotency key
+        const existing = await BookingModel.findOne({ customerId, idempotencyKey });
+        if (existing) {
+          res.status(200).json({
+            success: true,
+            message: 'Booking retrieved via idempotency key.',
+            booking: existing,
+            idempotent: true,
+          });
+          return;
+        }
+      }
+      throw createErr;
     }
 
     res.status(201).json({
@@ -351,40 +584,85 @@ export async function completeHandover(req: any, res: Response, next: NextFuncti
 export async function cancelBooking(req: any, res: Response, next: NextFunction) {
   try {
     const { id } = req.params;
+    const userId = req.user?.userId || req.user?.id;
+    const userRole = req.user?.role || 'CUSTOMER';
     const { reason, cancelledBy = 'customer', refundPercentage = 100, refundAmount, hostInformedCustomer } = req.body;
 
+    const isObjectId = /^[0-9a-fA-F]{24}$/.test(id);
     let booking: any = null;
     if (isUsingMemoryStore()) {
-      booking = memoryStore.bookings.find((b) => b._id === id || b.bookingId === id);
-      if (booking) {
-        booking.bookingStatus = 'CANCELLED';
-        booking.cancellationReason = reason;
-        booking.cancelledAt = new Date().toISOString();
-        booking.cancelledBy = cancelledBy;
-        booking.refundPercentage = refundPercentage;
-        booking.refundAmount = refundAmount;
-        booking.hostInformedCustomer = hostInformedCustomer;
-      }
+      booking = memoryStore.bookings.find((b) => b._id === id || b.bookingId === id || b.id === id);
     } else {
-      const isObjectId = /^[0-9a-fA-F]{24}$/.test(id);
-      booking = await BookingModel.findOneAndUpdate(
-        {
-          $or: [
-            ...(isObjectId ? [{ _id: id }] : []),
-            { bookingId: id },
-          ],
-        },
-        {
-          bookingStatus: 'CANCELLED',
-          cancellationReason: reason,
-        },
-        { new: true }
-      );
+      booking = await BookingModel.findOne({
+        $or: [...(isObjectId ? [{ _id: id }] : []), { bookingId: id }],
+      });
     }
 
     if (!booking) {
       res.status(404).json({ success: false, message: 'Booking not found' });
       return;
+    }
+
+    // Authenticated Ownership Verification: customer, host, or admin
+    const bookingCustId = booking.customerId?.toString?.() || String(booking.customerId);
+    const bookingHostId = booking.hostId?.toString?.() || String(booking.hostId);
+    if (userRole !== 'ADMIN' && userId && bookingCustId !== String(userId) && bookingHostId !== String(userId)) {
+      res.status(403).json({
+        success: false,
+        message: 'Forbidden: You do not have permission to cancel this booking.',
+      });
+      return;
+    }
+
+    // State machine check: cannot cancel already completed bookings
+    if (booking.bookingStatus === 'COMPLETED') {
+      res.status(400).json({
+        success: false,
+        message: 'Cannot cancel an already completed booking.',
+      });
+      return;
+    }
+
+    if (booking.bookingStatus === 'CANCELLED' || booking.bookingStatus === 'REFUNDED') {
+      res.status(400).json({
+        success: false,
+        message: 'Booking is already cancelled or refunded.',
+      });
+      return;
+    }
+
+    const cancelledAt = new Date().toISOString();
+    if (isUsingMemoryStore()) {
+      booking.bookingStatus = 'CANCELLED';
+      booking.cancellationReason = reason || 'Cancelled by user';
+      booking.cancelledAt = cancelledAt;
+      booking.cancelledBy = cancelledBy;
+      booking.refundPercentage = refundPercentage;
+      booking.refundAmount = refundAmount;
+      booking.hostInformedCustomer = hostInformedCustomer;
+      booking.updatedAt = cancelledAt;
+
+      // Release from vehicle.activeReservations in memoryStore
+      const veh = memoryStore.vehicles.find((v) => v._id === booking.vehicleId || v.id === booking.vehicleId);
+      if (veh && veh.activeReservations) {
+        veh.activeReservations = veh.activeReservations.filter((r: any) => r.bookingId !== booking.bookingId);
+      }
+    } else {
+      booking = await BookingModel.findOneAndUpdate(
+        { _id: booking._id },
+        {
+          bookingStatus: 'CANCELLED',
+          cancellationReason: reason || 'Cancelled by user',
+          updatedAt: new Date(),
+        },
+        { new: true }
+      );
+
+      // Release active reservation lock on Vehicle
+      await VehicleModel.updateOne(
+        { _id: booking.vehicleId },
+        { $pull: { activeReservations: { bookingId: booking.bookingId } } }
+      ).catch(() => {});
     }
 
     res.json({

@@ -75,9 +75,19 @@ export const bookingService = {
       pickupType: bookingData.pickupMethod || 'self_pickup',
       pickupLocation: bookingData.pickupLocation || 'Hazratganj Hub',
       dropoffLocation: bookingData.dropoffLocation || 'Hazratganj Hub',
+      idempotencyKey: bookingData.idempotencyKey,
     };
 
-    const response = await apiClient.post<{ success: boolean; booking: any; message?: string }>('/bookings', payload);
+    const headers: Record<string, string> = {};
+    if (bookingData.idempotencyKey) {
+      headers['Idempotency-Key'] = bookingData.idempotencyKey;
+    }
+
+    const response = await apiClient.post<{ success: boolean; booking: any; message?: string }>(
+      '/bookings',
+      payload,
+      headers
+    );
 
     if (response.success && response.data?.booking) {
       const adapted = adaptBackendBookingToMobile(response.data.booking);
@@ -90,7 +100,7 @@ export const bookingService = {
 
     return {
       success: false,
-      message: response.message || 'Failed to create booking on server',
+      message: response.message || (response.statusCode === 409 ? 'Vehicle is no longer available for the selected dates.' : 'Failed to create booking on server'),
       error: response.error,
       statusCode: response.statusCode,
     };

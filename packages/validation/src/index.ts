@@ -54,6 +54,7 @@ export const CreateBookingSchema = z.object({
   pickupLocation: z.string().min(2),
   dropoffLocation: z.string().min(2),
   discountCode: z.string().optional(),
+  idempotencyKey: z.string().optional(),
 });
 
 export const VerifyPaymentSchema = z.object({
