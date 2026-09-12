@@ -5,7 +5,7 @@ export interface IPaymentWebhookEventDoc extends Document {
   event: string;
   razorpayOrderId?: string;
   razorpayPaymentId?: string;
-  status: 'processed' | 'failed' | 'ignored';
+  status: 'processing' | 'processed' | 'failed' | 'ignored';
   receivedAt: Date;
   processedAt?: Date;
   failureReason?: string;
@@ -22,8 +22,8 @@ const PaymentWebhookEventSchema = new Schema<IPaymentWebhookEventDoc>(
     razorpayPaymentId: { type: String, index: true },
     status: {
       type: String,
-      enum: ['processed', 'failed', 'ignored'],
-      default: 'processed',
+      enum: ['processing', 'processed', 'failed', 'ignored'],
+      default: 'processing',
       index: true,
     },
     receivedAt: { type: Date, default: Date.now },

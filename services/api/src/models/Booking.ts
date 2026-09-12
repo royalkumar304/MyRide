@@ -121,7 +121,7 @@ const BookingSchema = new Schema<IBookingDoc>(
       default: 'UPCOMING',
       index: true,
     },
-    razorpayOrderId: { type: String, index: true, sparse: true },
+    razorpayOrderId: { type: String, unique: true, sparse: true },
     razorpayPaymentId: { type: String, index: true, sparse: true },
     paidAt: { type: Date },
     startInspection: { type: Object },

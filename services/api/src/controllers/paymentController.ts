@@ -339,12 +339,94 @@ export async function verifyPayment(req: any, res: Response, next: NextFunction)
 
 
 /**
+ * Safely performs self-healing upsert of a Payment document for an already paid/confirmed booking.
+ * Does NOT overwrite valid existing data ($setOnInsert).
+ * Recreates/backfills if missing.
+ * Does NOT invent fake payment IDs if unavailable.
+ */
+async function healPaymentRecordIfMissing(params: {
+  booking: any;
+  razorpayOrderId: string;
+  razorpayPaymentId?: string;
+  amountPaise: number;
+  currency?: string;
+  method?: string;
+}): Promise<void> {
+  const { booking, razorpayOrderId, razorpayPaymentId, amountPaise, currency = 'INR', method = 'upi' } = params;
+
+  if (!razorpayPaymentId) {
+    console.warn(
+      `[RAZORPAY_WEBHOOK] self_healing_payment_skipped: razorpayPaymentId unavailable for booking=${booking.bookingId || booking._id}`
+    );
+    return;
+  }
+
+  const validMethod = (['upi', 'card', 'netbanking', 'wallet'].includes(method)
+    ? method
+    : 'upi') as 'upi' | 'card' | 'netbanking' | 'wallet';
+
+  const now = new Date();
+
+  if (isUsingMemoryStore()) {
+    if (!memoryStore.payments) {
+      memoryStore.payments = [];
+    }
+    const existing = memoryStore.payments.find((p) => p.razorpayPaymentId === razorpayPaymentId);
+    if (!existing) {
+      console.log(
+        `[RAZORPAY_WEBHOOK] self_healing_payment_restored: backfilled missing payment=${razorpayPaymentId} for booking=${booking.bookingId}`
+      );
+      memoryStore.payments.push({
+        _id: `pay_${Date.now()}`,
+        id: `pay_${Date.now()}`,
+        bookingId: booking._id || booking.id,
+        customerId: booking.customerId,
+        razorpayOrderId,
+        razorpayPaymentId,
+        razorpaySignature: '',
+        amountPaise,
+        currency,
+        method: validMethod,
+        status: 'captured',
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+      });
+    }
+  } else {
+    // MongoDB: Use $setOnInsert so existing financial records are NEVER mutated or overwritten
+    await PaymentModel.findOneAndUpdate(
+      { razorpayPaymentId },
+      {
+        $setOnInsert: {
+          bookingId: booking._id,
+          customerId: booking.customerId,
+          razorpayOrderId,
+          razorpayPaymentId,
+          razorpaySignature: '',
+          amountPaise,
+          currency,
+          method: validMethod,
+          status: 'captured',
+        },
+      },
+      { upsert: true, new: true }
+    );
+    console.log(
+      `[RAZORPAY_WEBHOOK] self_healing_payment_checked: ensured payment record exists for payment=${razorpayPaymentId}`
+    );
+  }
+}
+
+/**
  * Production-Grade Razorpay Webhook Handler.
  * Authenticated cryptographically via HMAC-SHA256 signature using RAZORPAY_WEBHOOK_SECRET.
  * Provides durable idempotency, authoritative amount/currency validation,
  * state machine integrity, and atomic booking reconciliation.
  */
 export async function handleWebhook(req: Request, res: Response, next: NextFunction): Promise<void> {
+  let currentEventId: string | null = null;
+  let isClaimOwner = false;
+
   try {
     // 1. Extract Raw Body Buffer
     let rawBodyBuffer: Buffer;
@@ -424,28 +506,102 @@ export async function handleWebhook(req: Request, res: Response, next: NextFunct
       (req.headers['X-Razorpay-Event-Id'] as string);
     const eventId: string =
       headerEventId || payload.event_id || payload.id || `ev_${payloadHash.slice(0, 32)}`;
+    currentEventId = eventId;
 
     console.log(`[RAZORPAY_WEBHOOK] received event=${eventName} eventId=${eventId}`);
 
-    // 6. Durable Idempotency Check: Prevent duplicate event processing
-    let existingEvent: any = null;
+    // 6. Durable Atomic In-Flight Webhook Claim: Guarantee only ONE request owns processing
+    const receivedAt = new Date();
+
     if (isUsingMemoryStore()) {
       if (!memoryStore.webhookEvents) {
         memoryStore.webhookEvents = [];
       }
-      existingEvent = memoryStore.webhookEvents.find((e) => e.eventId === eventId);
-    } else {
-      existingEvent = await PaymentWebhookEventModel.findOne({ eventId });
-    }
-
-    if (existingEvent && existingEvent.status === 'processed') {
-      console.log(`[RAZORPAY_WEBHOOK] duplicate_event eventId=${eventId} - safely returning idempotent 200`);
-      res.status(200).json({
-        success: true,
-        message: 'Webhook event has already been processed',
-        idempotent: true,
+      const existing = memoryStore.webhookEvents.find((e) => e.eventId === eventId);
+      if (existing) {
+        console.log(`[RAZORPAY_WEBHOOK] duplicate_event eventId=${eventId} status=${existing.status} - returning idempotent 200`);
+        res.status(200).json({
+          success: true,
+          message:
+            existing.status === 'processed'
+              ? 'Webhook event has already been processed'
+              : 'Webhook event is already claimed or in-flight',
+          idempotent: true,
+        });
+        return;
+      }
+      // Atomically claim in memoryStore
+      memoryStore.webhookEvents.push({
+        eventId,
+        event: eventName,
+        status: 'processing',
+        receivedAt: receivedAt.toISOString(),
+        payloadHash,
       });
-      return;
+      isClaimOwner = true;
+    } else {
+      try {
+        await PaymentWebhookEventModel.create({
+          eventId,
+          event: eventName,
+          status: 'processing',
+          receivedAt,
+          payloadHash,
+        });
+        isClaimOwner = true;
+      } catch (err: any) {
+        const isDuplicateKey = err.code === 11000 || (err.message && err.message.includes('E11000'));
+        if (isDuplicateKey) {
+          console.log(`[RAZORPAY_WEBHOOK] duplicate_key_intercepted eventId=${eventId}`);
+          const existing = await PaymentWebhookEventModel.findOne({ eventId });
+
+          if (existing && existing.status === 'processed') {
+            res.status(200).json({
+              success: true,
+              message: 'Webhook event has already been processed',
+              idempotent: true,
+            });
+            return;
+          }
+
+          if (existing && existing.status === 'processing') {
+            const ageMs = Date.now() - new Date(existing.receivedAt || (existing as any).createdAt).getTime();
+            if (ageMs > 120000) {
+              console.warn(`[RAZORPAY_WEBHOOK] reclaiming stale processing lock for eventId=${eventId}`);
+              isClaimOwner = true;
+            } else {
+              // Wait briefly for in-flight processing to complete
+              let isFinished = false;
+              for (let i = 0; i < 6; i++) {
+                await new Promise((r) => setTimeout(r, 250));
+                const updated = await PaymentWebhookEventModel.findOne({ eventId });
+                if (updated && updated.status === 'processed') {
+                  isFinished = true;
+                  break;
+                }
+              }
+
+              res.status(200).json({
+                success: true,
+                message: isFinished
+                  ? 'Webhook event has already been processed'
+                  : 'Webhook event is currently being processed by in-flight request',
+                idempotent: true,
+              });
+              return;
+            }
+          } else {
+            res.status(200).json({
+              success: true,
+              message: `Webhook event previously recorded with status '${existing?.status || 'recorded'}'`,
+              idempotent: true,
+            });
+            return;
+          }
+        } else {
+          throw err;
+        }
+      }
     }
 
     // Helper to persist webhook event status
@@ -584,6 +740,16 @@ export async function handleWebhook(req: Request, res: Response, next: NextFunct
       // Check if already paid and confirmed (Idempotency on Booking/Payment)
       if (booking.paymentStatus === 'paid' && booking.bookingStatus === 'CONFIRMED') {
         console.log(`[RAZORPAY_WEBHOOK] already_paid booking=${booking.bookingId}`);
+        // Self-healing: verify Payment record exists, backfill safely if missing
+        await healPaymentRecordIfMissing({
+          booking,
+          razorpayOrderId,
+          razorpayPaymentId,
+          amountPaise,
+          currency,
+          method: paymentMethod,
+        });
+
         await recordWebhookEvent('processed', { razorpayOrderId, razorpayPaymentId });
         res.status(200).json({
           success: true,
@@ -719,7 +885,19 @@ export async function handleWebhook(req: Request, res: Response, next: NextFunct
 
       // Check if already paid/confirmed
       if (booking.paymentStatus === 'paid' && booking.bookingStatus === 'CONFIRMED') {
-        await recordWebhookEvent('processed', { razorpayOrderId });
+        const orderPaymentId = paymentEntity?.id || booking.razorpayPaymentId;
+        const totalPaise = Math.round((booking.pricing?.totalAmount || 0) * 100);
+        // Self-healing: verify Payment record exists, backfill safely if missing
+        await healPaymentRecordIfMissing({
+          booking,
+          razorpayOrderId,
+          razorpayPaymentId: orderPaymentId,
+          amountPaise: totalPaise,
+          currency: 'INR',
+          method: paymentEntity?.method || 'upi',
+        });
+
+        await recordWebhookEvent('processed', { razorpayOrderId, razorpayPaymentId: orderPaymentId });
         res.status(200).json({
           success: true,
           message: 'Booking already paid and confirmed',
@@ -901,8 +1079,26 @@ export async function handleWebhook(req: Request, res: Response, next: NextFunct
       success: true,
       message: `Webhook event '${eventName}' acknowledged and safely ignored`,
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('[RAZORPAY_WEBHOOK] unexpected_processing_error', error);
+    try {
+      if (isClaimOwner && currentEventId) {
+        if (isUsingMemoryStore()) {
+          const rec = memoryStore.webhookEvents?.find((e) => e.eventId === currentEventId);
+          if (rec) {
+            rec.status = 'failed';
+            rec.failureReason = error?.message || 'unexpected_error';
+          }
+        } else {
+          await PaymentWebhookEventModel.updateOne(
+            { eventId: currentEventId },
+            { status: 'failed', failureReason: error?.message || 'unexpected_error' }
+          );
+        }
+      }
+    } catch {
+      // Safe boundary for error telemetry
+    }
     // Return 500 so Razorpay knows to retry temporary internal processing failures
     res.status(500).json({
       success: false,

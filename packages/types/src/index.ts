@@ -278,7 +278,7 @@ export interface IPaymentWebhookEvent {
   event: string;
   razorpayOrderId?: string;
   razorpayPaymentId?: string;
-  status: 'processed' | 'failed' | 'ignored';
+  status: 'processing' | 'processed' | 'failed' | 'ignored';
   receivedAt: string;
   processedAt?: string;
   failureReason?: string;

@@ -5,6 +5,9 @@ import { connectDB } from '../config/db';
 import { memoryStore } from '../config/store';
 import { razorpayService } from '../services/razorpayService';
 import { handleWebhook } from '../controllers/paymentController';
+import BookingModel from '../models/Booking';
+import PaymentModel from '../models/Payment';
+import PaymentWebhookEventModel from '../models/PaymentWebhookEvent';
 
 function createMockResponse() {
   const res: any = {
@@ -619,7 +622,148 @@ async function runWebhookTests() {
   assert.strictEqual(resTampered.statusCode, 400, 'Tampered payload with mismatched signature must be rejected with 400');
   console.log('  ✅ Test U Passed: Payload tampering prevented; secrets never leaked in any response.');
 
-  console.log('\n🎉 ALL 21 PRODUCTION RAZORPAY WEBHOOK TESTS (A through U) PASSED PERFECTLY!\n');
+  // Test V: Self-Healing Payment Upsert
+  console.log('\nTest V: Self-Healing Payment Upsert: Missing payment record is automatically backfilled on retry');
+  const bookingV: any = {
+    ...bookingA,
+    _id: 'bk_mongo_id_wh_heal_001',
+    id: 'bk_mongo_id_wh_heal_001',
+    bookingId: 'MYR-WH-HEAL-001',
+    razorpayOrderId: 'order_wh_rzp_heal_001',
+    paymentStatus: 'paid',
+    bookingStatus: 'CONFIRMED',
+    paidAt: new Date().toISOString(),
+  };
+  memoryStore.bookings.push(bookingV);
+
+  // Ensure payment record is missing
+  const paymentIndexV = memoryStore.payments.findIndex(
+    (p) => p.razorpayPaymentId === 'pay_test_wh_heal_001'
+  );
+  if (paymentIndexV >= 0) {
+    memoryStore.payments.splice(paymentIndexV, 1);
+  }
+  assert.strictEqual(
+    memoryStore.payments.some((p) => p.razorpayPaymentId === 'pay_test_wh_heal_001'),
+    false,
+    'Payment record must initially be absent to simulate crash between booking & payment write'
+  );
+
+  const payloadV = {
+    entity: 'event',
+    event: 'payment.captured',
+    payload: {
+      payment: {
+        entity: {
+          id: 'pay_test_wh_heal_001',
+          order_id: 'order_wh_rzp_heal_001',
+          amount: 435400,
+          currency: 'INR',
+          status: 'captured',
+          method: 'card',
+        },
+      },
+    },
+  };
+
+  const resV = await callWebhook({
+    rawPayload: payloadV,
+    eventIdHeader: 'event_wh_heal_001',
+  });
+  assert.strictEqual(resV.statusCode, 200, 'Webhook retry must return 200');
+  assert.strictEqual(resV.body.idempotent, true);
+
+  // Verify that self-healing automatically backfilled the missing Payment document
+  const healedPayment = memoryStore.payments.find((p) => p.razorpayPaymentId === 'pay_test_wh_heal_001');
+  assert.ok(healedPayment, 'Payment record must be restored via self-healing upsert');
+  assert.strictEqual(healedPayment.amountPaise, 435400);
+  assert.strictEqual(healedPayment.status, 'captured');
+  assert.strictEqual(healedPayment.method, 'card');
+  assert.strictEqual(bookingV.paymentStatus, 'paid');
+  assert.strictEqual(bookingV.bookingStatus, 'CONFIRMED');
+
+  // Verify that another delivery does NOT create duplicates
+  const paymentsCountAfterHeal = memoryStore.payments.length;
+  await callWebhook({
+    rawPayload: payloadV,
+    eventIdHeader: 'event_wh_heal_002',
+  });
+  assert.strictEqual(memoryStore.payments.length, paymentsCountAfterHeal, 'Must NOT create duplicate payments');
+  console.log('  ✅ Test V Passed: Missing payment record automatically restored without duplicate records.');
+
+  // Test W: Concurrent Duplicate Webhook Processing
+  console.log('\nTest W: Concurrent Duplicate Webhook Processing: In-flight atomic claim handles simultaneous requests');
+  const bookingW: any = {
+    ...bookingA,
+    _id: 'bk_mongo_id_wh_concurrent_001',
+    id: 'bk_mongo_id_wh_concurrent_001',
+    bookingId: 'MYR-WH-CONCURRENT-001',
+    razorpayOrderId: 'order_wh_rzp_concurrent_001',
+    paymentStatus: 'pending',
+    bookingStatus: 'PAYMENT_PENDING',
+  };
+  memoryStore.bookings.push(bookingW);
+
+  const payloadW = {
+    entity: 'event',
+    event: 'payment.captured',
+    payload: {
+      payment: {
+        entity: {
+          id: 'pay_test_wh_concurrent_001',
+          order_id: 'order_wh_rzp_concurrent_001',
+          amount: 435400,
+          currency: 'INR',
+          status: 'captured',
+          method: 'upi',
+        },
+      },
+    },
+  };
+
+  const [resW1, resW2] = await Promise.all([
+    callWebhook({
+      rawPayload: payloadW,
+      eventIdHeader: 'event_wh_concurrent_001',
+    }),
+    callWebhook({
+      rawPayload: payloadW,
+      eventIdHeader: 'event_wh_concurrent_001',
+    }),
+  ]);
+
+  assert.strictEqual(resW1.statusCode, 200);
+  assert.strictEqual(resW2.statusCode, 200);
+  // Exactly one payment record exists with this payment ID
+  const matchingPayments = memoryStore.payments.filter(
+    (p) => p.razorpayPaymentId === 'pay_test_wh_concurrent_001'
+  );
+  assert.strictEqual(matchingPayments.length, 1, 'Exactly one payment document must exist');
+  // Booking is confirmed
+  assert.strictEqual(bookingW.paymentStatus, 'paid');
+  assert.strictEqual(bookingW.bookingStatus, 'CONFIRMED');
+  // Only one webhook event entry exists
+  const matchingEvents = memoryStore.webhookEvents.filter(
+    (e) => e.eventId === 'event_wh_concurrent_001'
+  );
+  assert.strictEqual(matchingEvents.length, 1, 'Exactly one webhook event record must exist');
+  console.log('  ✅ Test W Passed: Concurrent duplicate requests safely handled without duplicate side effects.');
+
+  // Test X: Unique Razorpay Order ID Schema Enforcement
+  console.log('\nTest X: Unique Razorpay Order ID: Booking schema enforces unique and sparse index on razorpayOrderId');
+  const razorpayOrderIdPath: any = BookingModel.schema.path('razorpayOrderId');
+  assert.ok(razorpayOrderIdPath, 'razorpayOrderId path must exist on Booking schema');
+  assert.strictEqual(razorpayOrderIdPath.options.unique, true, 'razorpayOrderId must be configured with unique: true');
+  assert.strictEqual(razorpayOrderIdPath.options.sparse, true, 'razorpayOrderId must be configured with sparse: true');
+
+  const webhookEventIdPath: any = PaymentWebhookEventModel.schema.path('eventId');
+  assert.strictEqual(webhookEventIdPath.options.unique, true, 'eventId must be unique on PaymentWebhookEvent schema');
+
+  const paymentPaymentIdPath: any = PaymentModel.schema.path('razorpayPaymentId');
+  assert.strictEqual(paymentPaymentIdPath.options.unique, true, 'razorpayPaymentId must be unique on Payment schema');
+  console.log('  ✅ Test X Passed: Unique and sparse index constraints verified on Booking, Payment, and PaymentWebhookEvent schemas.');
+
+  console.log('\n🎉 ALL 24 PRODUCTION RAZORPAY WEBHOOK TESTS (A through X) PASSED PERFECTLY!\n');
 }
 
 runWebhookTests().catch((err) => {
